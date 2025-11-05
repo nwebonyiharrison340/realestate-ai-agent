@@ -1,0 +1,409 @@
+
+[
+    {
+    "question": "How can I list my property for rent?",
+    "answer": "Go to your dashboard, tap 'Add Property', fill in the details, and click 'Submit'."
+  },
+  {
+    "question": "How do I contact a landlord?",
+    "answer": "On the property page, tap 'Contact Landlord' to send a message directly."
+  },
+  {
+    "question": "Is there a fee for listing a property?",
+    "answer": "No, listing a property is free. We only charge a small service fee upon successful transactions."
+  },
+{
+ "Question": "What documents do I need to rent in the neighborhood?",
+ "Answer": "ID, proof of income/first payment. Remember, always do your research before making decisions."
+},
+{
+ "question": "How do I prepare my house before listing it for rent or sale?",
+ "answer": "Clean, declutter, fix small issues, and upload clear photos. On Qarba, quality images and honest descriptions help your listing stand out and attract serious renters or buyers."
+},
+{
+ "question": "Do I need an agent to sell my property?",
+ "answer": "No, you can sell directly without an agent. On Qarba, you can list your property, interact with buyers, and close deals without paying agent commissions."
+},
+{
+ "question": "How long does it take to sell a house?",
+ "answer": "It can take weeks  depending on pricing, location, and demand. On Qarba, boosted listings and accurate pricing help properties sell faster."
+},
+{
+ "question": "Are there taxes when selling property?",
+ "answer": "Yes, property sale taxes may apply depending on local laws. Qarba recommends confirming with your local authority or legal advisor before completing a sale."
+},
+{
+ "question": "How do I make my house more appealing to buyers?",
+ "answer": "Clean thoroughly, repair visible issues, and use neutral styling. Listings with neat presentation on Qarba get more requests and faster closing."
+},
+{
+ "question": "Do real estate agents negotiate deals?",
+ "answer": "Yes, agents help negotiate prices and contract terms. On Qarba, you can negotiate directly or bring your agent into the chat."
+},
+{
+ "question": "Do I need a home warranty?",
+ "answer": "A home warranty gives buyers peace of mind for repairs. Qarba encourages sellers to offer warranties when possible for faster sales."
+},
+{
+ "question": "Should I get a home inspection before buying?",
+ "answer": "Yes, inspections help you avoid hidden problems. On Qarba, we recommend always inspecting property physically before payment."
+},
+{
+"question": "Can foreign buyers purchase property?",
+"answer": "Yes, depending on country laws. Qarba helps overseas buyers connect with verified property owners safely."
+},
+{
+ "question": "Can I sell my house without a lawyer?",
+ "answer": "You can, but legal review is recommended. On Qarba, we encourage using legal professionals to avoid disputes."
+},
+{
+ "question": "What does a listing agreement do?",
+ "answer": "It states terms when working with an agent. On Qarba, private owners can list freely without binding contracts."
+},
+{
+ "question": "Are virtual tours useful for selling homes?",
+ "answer": "Yes, virtual tours increase visibility and save time. Qarba supports property videos and virtual viewing appointments."
+},
+{
+ "question": "What is real estate closing?",
+ "answer": "Closing is when payment is completed and ownership transfers. Qarba encourages escrow use for safe closing."
+},
+{
+ "question": "Will my rent increase every year?",
+ "answer": "Rent rearly increases yearly. Qarba helps track rental history and increase transparency."
+},
+{
+ "question": "Do tenants pay utilities?",
+ "answer": "Utility payment rules depend on your lease agreement. Qarba listings clearly show what utilities tenants pay."
+},
+{
+ "question": "Can I sublet a rental property?",
+ "answer": "Only if the landlord allows it. Qarba encourages transparency and landlord approval before subletting."
+},
+{
+ "question": "How do I renew my lease?",
+ "answer": "Contact the landlord before your contract ends. Qarba reminders help tenants renew on time."
+},
+{
+ "question": "Do I get my security deposit back?",
+ "answer": "Yes, if there’s no damage and rent is paid. Qarba promotes fair rental practices for both parties."
+},
+{
+ "question": "What documents do I need to rent a house?",
+ "answer": "National ID, proof of income, and rental agreement. Qarba helps landlords verify tenants safely."
+},
+{
+ "question": "Can I run a business from a rented home?",
+ "answer": "Only if zoning and landlord permits allow it. Qarba listings show property use restrictions."
+},
+{
+ "question": "What increases property value the most?",
+ "answer": "Good location, upgrades, and strong maintenance history. Qarba boosts verified high-value properties."
+},
+{
+ "question": "What makes a property affordable for tenants?",
+ "answer": "Fair pricing, good access to transportation, and reasonable deposits. Qarba encourages fair rental markets."
+},
+{
+ "question": "Why should I list on Qarba?",
+ "answer": "Qarba connects genuine buyers, sellers, and renters, reduces fraud risk, promotes transparency, and helps properties get discovered quickly."
+},
+{
+            "question": "Can I negotiate rent with a landlord?",
+            "answer": "Yes! Many landlords are open to negotiation, especially when you’re a reliable tenant. Always approach politely and bring reasons like long-term stay or good rental history. On Qarba, our messaging system lets you negotiate clearly and respectfully."
+        },
+        {
+            "question": "How do I attract quality tenants?",
+            "answer": "Quality tenants look for clean, well-maintained homes and responsive landlords. Provide good photos, accurate descriptions, and fair rules. On Qarba, verified landlords and clear listings build trust — helping you attract responsible tenants faster."
+        },
+        {
+            "question": "Do I need to stage my property before selling?",
+            "answer": "Staging isn’t mandatory, but it can make your home look more appealing and help buyers imagine living there. Even simple touches like plants and tidy rooms help. Qarba gives staged listings higher engagement and visibility."
+        },
+        {
+            "question": "What should I disclose when selling property?",
+            "answer": "Honesty wins trust. Be transparent about ownership, repairs, structural issues, and legal status. Qarba supports transparency — verified listings and clear details protect both sides and speed up deals."
+        },
+        {
+            "question": "How do I price my property correctly?",
+            "answer": "Compare similar homes in your neighborhood, consider size and condition, and look at recent market trends. On Qarba, our insights and upcoming valuation tools will help you price confidently and competitively."
+        },
+        {
+            "question": "Can I list multiple properties on Qarba?",
+            "answer": "Absolutely! Whether you're a landlord, agent, or developer, Qarba allows multiple listings. The more transparent and organized your listings, the more trust you gain from renters and buyers."
+        },
+        {
+            "question": "Do I need physical meetings before closing a rental or sale?",
+            "answer": "Meeting in person is highly recommended, especially for property inspection and paperwork. Qarba supports online communication, but we encourage verified physical inspections for safety and confidence."
+        },
+        {
+            "question": "What if a buyer backs out last minute?",
+            "answer": "It happens. Keep communication professional and always use written agreements. On Qarba, we promote secure deposit structures and buyer verification to reduce cancellations and wasted time."
+        },
+        {
+            "question": "Can I rent my home fully furnished?",
+            "answer": "Yes! Furnished rentals attract professionals, students, and short-term tenants. List the items included and their condition. Qarba helps you highlight modern, furnished spaces for higher-value tenants."
+        },
+        {
+            "question": "How do I maintain my rental property?",
+            "answer": "Regular cleaning, plumbing checks, and timely repairs keep your property attractive and reduce long-term costs. On Qarba, tenants appreciate landlords who maintain properties — boosting your rating and demand."
+        },
+        {
+            "question": "Can I list land on Qarba?",
+            "answer": "Yes, Qarba supports land listings. Simply include location, size, documents, and purpose (residential, commercial, agricultural). Verified land listings build strong buyer trust on the platform."
+        },
+        {
+            "question": "How can I confirm property ownership?",
+            "answer": "Always request land titles, survey plans, receipts, and government approvals. For added security, verify documents with local land authorities. Qarba encourages safe transactions through verified property profiles."
+        },
+        {
+            "question": "Can commercial buildings be listed on Qarba?",
+            "answer": "Yes! Offices, shops, warehouses, and business spaces are welcome on Qarba. Add clear images, location benefits, and amenities to attract serious business tenants and investors."
+        },
+        {
+            "question": "What if my tenant damages the property?",
+            "answer": "Document everything and discuss repairs fairly. Security deposits help cover damage costs. On Qarba, we encourage clear agreements and respectful communication to maintain good landlord-tenant relationships."
+        },
+        {
+            "question": "Can I buy property as an investment?",
+            "answer": "Yes! Real estate is a long-term wealth builder. Whether renting or reselling, the right investment yields strong returns. Qarba helps you access properties in growing neighborhoods to maximize your investment."
+        },
+        {
+            "question": "What amenities make properties more attractive?",
+            "answer": "Parking, security, clean water supply, good road access, and modern finishes make properties stand out. Qarba listings highlight amenity features so renters and buyers quickly see your advantages."
+        },
+        {
+            "question": "How can I avoid rental scams?",
+            "answer": "Always inspect property physically, request documents, and avoid rushed payments. Use verified profiles and escrow when possible. Qarba prioritizes secure listings and user verification to help you stay safe."
+        },
+        {
+            "question": "Why are some rentals more expensive?",
+            "answer": "Pricing depends on location, security, condition, demand, and amenities. On Qarba, listings show these features clearly so renters understand property value upfront."
+        },
+        {
+            "question": "Can I pay rent monthly instead of yearly?",
+            "answer": "It depends on the landlord. Some prefer annual payments, others accept monthly or quarterly. Qarba allows flexible payment terms — clearly displayed on each listing."
+        },
+        {
+            "question": "Do landlords check tenant history?",
+            "answer": "Yes, many landlords verify rental history, employment, and references to ensure responsible tenants. Qarba encourages transparency for safer leasing experiences."
+        },
+        {
+            "question": "What is property appreciation?",
+            "answer": "Appreciation is the increase in property value over time. Good locations, infrastructure, and development drive growth. On Qarba, we help you spot trending areas early."
+        },
+        {
+            "question": "Can I rent out a room instead of a whole house?",
+            "answer": "Absolutely. Room rentals are popular among students, workers, and travelers. Qarba supports room listings — just clearly describe the space and shared facilities."
+        },
+        {
+            "question": "How do installment payment plans work for property purchases?",
+            "answer": "Developers or sellers may allow staged payments over months or years. Always get written agreements. Qarba highlights installment-friendly listings and trusted developers."
+        },
+        {
+            "question": "How do I screen tenants?",
+            "answer": "Request ID, employment info, references, and meet in person. Screening protects your property. Qarba helps with secure communication and identity transparency."
+        },
+        {
+            "question": "Do I need insurance for my property?",
+            "answer": "Property insurance protects against damage, theft, and emergencies. While optional, it's wise for owners and investors. Qarba is working with partners to offer trusted insurance options soon."
+        },
+        {
+            "question": "What happens if rent is late?",
+            "answer": "Communicate first, then follow your lease agreement penalties. Fairness encourages good long-term tenant relationships. Qarba promotes respectful landlord-tenant dialogue."
+        },
+        {
+            "question": "Can I lease land for farming or business?",
+            "answer": "Yes, leasing land is common for farming, commercial use, and industrial setups. Qarba supports land lease listings to connect landowners with serious tenants."
+        },
+        {
+            "question": "How can I market my property better?",
+            "answer": "Use great photos, clear descriptions, highlight benefits, and set fair pricing. Qarba’s platform boosts visibility and matches you with genuine buyers and renters."
+        },
+        {
+            "question": "Can I negotiate property price?",
+            "answer": "Yes — negotiation is normal in real estate. Be polite, reasonable, and support your offer with facts. Qarba’s messaging makes negotiation smooth and secure."
+        },
+        {
+            "question": "What is a tenancy agreement?",
+            "answer": "It's a legal contract between landlord and tenant outlining rights and responsibilities. Qarba encourages written agreements to avoid misunderstandings."
+        },
+        {
+            "question": "How important is location in real estate?",
+            "answer": "Location is one of the biggest value drivers. Access to roads, schools, business hubs, and safety matters. Qarba features interactive maps to help users judge location quality."
+        },
+        {
+            "question": "Can I list short-term rental apartments on Qarba?",
+            "answer": "Yes — short-stay and serviced apartments are welcome. Add pricing, rules, and amenities clearly. Qarba connects you with travelers and working professionals."
+        },
+        {
+            "question": "How do I verify a tenant's income?",
+            "answer": "Request pay slips, employment letters, or bank statements. Qarba encourages honest, respectful verification to build trust."
+        },
+        {
+            "question": "What is down payment in property buying?",
+            "answer": "It’s the initial amount paid upfront before financing the rest through a loan or payment plan. On Qarba, sellers often specify minimum down-payment requirements."
+        },
+        {
+            "question": "What happens if I want to move out before my lease ends?",
+            "answer": "Check your contract — some allow break fees or replacements. Communicate early to avoid issues. Qarba promotes fair rental terms for smoother transitions."
+        },
+        {
+            "question": "How do I avoid overpaying for a property?",
+            "answer": "Compare similar properties, get an independent valuation, and research the area. Qarba gives market insights to help you decide smarter."
+        },
+        {
+            "question": "Can I list student housing on Qarba?",
+            "answer": "Yes — student accommodation is in demand. Add location near campuses, pricing, and rules. Qarba helps you reach student renters easily."
+        },
+        {
+            "question": "What if a landlord refuses repairs?",
+            "answer": "Discuss politely first. If unresolved, refer to your rental agreement and local housing rules. Qarba encourages responsible landlords for healthy rental communities."
+        },
+        {
+            "question": "Can I buy land and build later?",
+            "answer": "Yes, many investors do this — land often appreciates. Always secure proper documents. Qarba helps you discover future-growth locations early."
+        },
+        {
+            "question": "Should I furnish my rental apartment?",
+            "answer": "If targeting professionals or short-term tenants, furnishing adds value and higher rent. Qarba highlights furnished properties for premium searches."
+        },
+        {
+            "question": "How do I end a rental lease properly?",
+            "answer": "Give written notice within the time stated in your agreement and leave the property clean. Qarba encourages fair moves for a smooth exit."
+        },
+        {
+            "question": "What gives a home high resale value?",
+            "answer": "Good neighborhood, modern designs, reliable electricity/water, and solid documentation. Qarba helps spotlight valuable features in your listing."
+        },
+        {
+            "question": "Can I share an apartment with roommates?",
+            "answer": "Yes, if the landlord approves. Shared housing saves cost and is popular. Qarba supports shared listings and room rentals."
+        },
+        {
+            "question": "What should I check during property inspection?",
+            "answer": "Look at plumbing, wiring, roofing, security, and legal documents. Qarba encourages buyers to ask questions and verify everything before paying."
+        },
+        {
+            "question": "How do I safely send money for property?",
+            "answer": "Use bank transfers, escrow, or trusted legal channels — avoid cash when possible. Qarba promotes secure payments and verified sellers."
+        },
+        {
+            "question": "Can I list unfinished property?",
+            "answer": "Yes — many buyers are looking for projects or investment shells. State the stage clearly and upload site photos. Qarba gives exposure to serious investors."
+        },
+        {
+            "question": "How do I know a rental price is fair?",
+            "answer": "Compare similar homes in the same area and consider amenities. Qarba shows market-aligned prices to support fair rental decisions."
+        },
+        {
+            "question": "Do landlords provide receipts?",
+            "answer": "Yes, rent receipts protect both parties and prove payment. Qarba encourages clear digital records for transparency and peace of mind."
+        },
+        {
+            "question": "Can I buy property directly from the owner?",
+            "answer": "Yes! Direct purchases avoid agency fees and speed communication. Qarba makes owner-to-buyer deals easy and secure."
+        },
+        {
+            "question": "What fees should I expect when buying property?",
+            "answer": "Expect legal fees, survey fees, documentation charges, and sometimes commission or tax. Qarba listings help you plan by showing expected costs."
+        },
+        {
+            "question": "Is off-plan property a good investment?",
+            "answer": "Yes, if working with reputable developers — it's often cheaper and grows in value by completion. Qarba highlights trusted, verified developers."
+        },
+        {
+            "question": "How do I avoid buying fake land?",
+            "answer": "Verify ownership, request survey plans, and check government records. Qarba prioritizes verified land and supports safe property documentation."
+        },
+        {
+            "question": "Whats a property survey plan?",
+            "answer": "It's a map outlining property boundaries and size — essential for land purchases. Qarba encourages confirming survey plans before paying."
+        },
+        {
+            "question": "Can I pay for rent online?",
+            "answer": "Yes, many landlords accept transfers. Always keep receipts. Qarba will soon support secure rental payment options directly in-app."
+        },
+        {
+            "question": "Do I need an agent to find rental apartments?",
+            "answer": "Not necessarily — Qarba connects you directly with landlords and verified agents so you can search freely without extra fees."
+        },
+        {
+            "question": "Can I list student hostels?",
+            "answer": "Yes — hostels and shared accommodation are welcome. Qarba helps students find safe, affordable living near campuses."
+        },
+        {
+            "question": "What is property documentation?",
+            "answer": "These are legal papers proving ownership and rights — like titles, deeds, and survey plans. Qarba encourages uploading proof for credibility."
+        },
+        {
+            "question": "Why do landlords ask for guarantors?",
+            "answer": "Guarantors add security in case of unpaid rent or damages. Qarba supports fair verification practices to keep transactions safe."
+        },
+        {
+            "question": "Can I rent without a job?",
+            "answer": "Yes, but landlords may request guarantors or proof of funds. Qarba encourages honest communication to match responsible tenants with fair landlords."
+        },
+        {
+            "question": "How do I pick the right neighborhood?",
+            "answer": "Consider commute, security, noise levels, amenities, and local development. Qarba location filters help you compare areas easily."
+        },
+        {
+            "question": "Can I pay rent with installments?",
+            "answer": "Some landlords accept installments — always confirm terms before signing. Qarba lets you filter listings by payment flexibility."
+        },
+        {
+            "question": "What is a property deed?",
+            "answer": "A deed is a legal document transferring property from seller to buyer. Always verify it. Qarba encourages safe and traceable transfers."
+        },
+        {
+            "question": "What is the benefit of verified listings?",
+            "answer": "Verified listings reduce risk, improve trust, and attract serious renters and buyers. Qarba prioritizes verified listings for user safety."
+        },
+        {
+            "question": "Can I rent property for business use?",
+            "answer": "Yes, many properties can be rented for offices, shops, or commercial activities — always confirm zoning. Qarba supports commercial listings too."
+        },
+        {
+            "question": "How can I improve my chances of getting a rental?",
+            "answer": "Prepare documents, respond quickly, and be polite with landlords. On Qarba, verified tenant profiles stand out and secure homes faster."
+        },
+        {
+            "question": "Can landlords request advance payment?",
+            "answer": "Yes, depending on market norms and rental agreements. Qarba encourages fair and transparent payment terms for both parties."
+        },
+        {
+            "question": "Why is documentation important in real estate?",
+            "answer": "Documents protect both buyer and seller, proving ownership and agreement details. Qarba supports documentation uploads to prevent fraud."
+        },
+        {
+            "question": "Can I invest in property with little money?",
+            "answer": "Yes — consider installment plans, land banking in emerging areas, or co-ownership. Qarba helps you find beginner-friendly investment options."
+        },
+        {
+            "question": "How do I spot a good investment area?",
+            "answer": "Look for new infrastructure, schools, hospitals, businesses, and population growth. Qarba highlights fast-growing areas for smart investors."
+        },
+        {
+            "question": "Can I rent my home while living abroad?",
+            "answer": "Yes — appoint a trusted manager or agent. Qarba helps overseas owners list properties and manage communication remotely."
+        },
+        {
+            "question": "Can I contact sellers directly on Qarba?",
+            "answer": "Yes, direct communication helps faster decisions and seamless negotiation. Qarba keeps communication secure and scam-aware."
+        },
+        {
+            "question": "Is real estate profitable long-term?",
+            "answer": "Yes, real estate builds wealth through appreciation and rental income. Qarba helps you find long-term, high-growth opportunities."
+        },
+        {
+            "question": "How do I get more leads on Qarba?",
+            "answer": "Upload high-quality photos, write clear descriptions, and price competitively. Boost listings and verify your profile for more visibility."
+        },
+        {
+            "question": "Why should investors use Qarba?",
+            "answer": "Qarba gives access to quality properties, trusted sellers, verified listings, and emerging investment zones — helping investors make smart, confident decisions with real-estate clarity."
+        }
+    
+
+]
