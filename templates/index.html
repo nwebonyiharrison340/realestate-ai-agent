@@ -1,22 +1,38 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Qarba AI Assistant</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tailwindcss@3.3.2/dist/tailwind.min.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Qarba Real Estate Assistant</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body class="bg-gray-100 flex flex-col items-center justify-center min-h-screen">
-    <div class="bg-white shadow-lg rounded-2xl w-full max-w-md p-6">
-        <h1 class="text-2xl font-bold text-center mb-4">🏡 Qarba AI Assistant</h1>
-        <div id="chat-box" class="h-96 overflow-y-auto border p-3 rounded-lg bg-gray-50 mb-3"></div>
-        <div class="flex">
-            <input id="user-input" type="text" placeholder="Ask about rent-to-own..." 
-                   class="flex-1 border rounded-l-lg p-2 focus:outline-none">
-            <button id="send-btn" 
-                    class="bg-blue-600 text-white px-4 rounded-r-lg hover:bg-blue-700">Send</button>
-        </div>
+<body>
+
+  <!-- Floating Chat Button -->
+  <div id="chat-toggle-btn">
+    💬 Chat with Tinah
+  </div>
+
+  <!-- Chat Widget -->
+  <div class="chat-widget" id="chat-widget">
+    <div class="chat-header">
+      <img src="{{ url_for('static', filename='Qarba_logo-removebg-preview.png') }}" alt="Qarba Logo">
+      <div class="brand-info">
+        <h2>Tinah</h2>
+        <p>Revolutionizing real estate across Nigeria through innovation, transparency, and service.</p>
+      </div>
     </div>
 
-    <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <div class="chat-body" id="chat-body">
+      <!-- Messages will appear here -->
+    </div>
+
+    <div class="chat-input">
+      <input type="text" id="user-input" placeholder="Type your message..." />
+      <button id="send-btn">Send</button>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>

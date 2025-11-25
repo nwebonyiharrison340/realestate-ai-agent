@@ -13,8 +13,8 @@
     "answer": "No, listing a property is free. We only charge a small service fee upon successful transactions."
   },
 {
- "Question": "What documents do I need to rent in the neighborhood?",
- "Answer": "ID, proof of income/first payment. Remember, always do your research before making decisions."
+ "question": "What documents do I need to rent in the neighborhood?",
+ "answer": "ID, proof of income/first payment. Remember, always do your research before making decisions."
 },
 {
  "question": "How do I prepare my house before listing it for rent or sale?",
@@ -403,7 +403,79 @@
         {
             "question": "Why should investors use Qarba?",
             "answer": "Qarba gives access to quality properties, trusted sellers, verified listings, and emerging investment zones — helping investors make smart, confident decisions with real-estate clarity."
-        }
+        },
+        {
+        "question": "Where can I find available properties for rent or sale? ",
+        "answer": " On the homepage, use the search bar to choose property type, location, and budget. You can also use filters to narrow your search by bedrooms, amenities, or price range."
+    },
+    {
+        "question": " How do I post a new property listing",
+        "answer": " click “List Property” at the top right, and fill in the details — property type, location, price, and images. Qarba guides you step-by-step until your listing goes live."
+    },
+    {
+        "question": "How do I edit or update my property listing?",
+        "answer": "Go to your Dashboard > My Listings, select the property you want to edit, and click Edit Listing. You can update photos, prices, or details anytime."
+    },
+    {
+        "question": "How do I use filters effectively on Qarba?",
+        "answer": "After searching, click Filter to refine results by location, price range, bedrooms, bathrooms, and property type. Qarba instantly updates the listings that match your preferences."
+    },
+    {
+        "question": "How do I switch between rent and buy options?",
+        "answer": "On the homepage or search page, toggle between Rent and Buy tabs. Qarba separates listings by category so you can easily focus on what you’re looking for."
+    },
+    {
+        "question": "Is there a map view to explore properties by location?",
+        "answer": "Yes! Click “Map View” while browsing listings. You’ll see properties pinned by area, helping you visualize proximity to roads, schools, or workplaces."
+    },
+    {
+        "question": "How do I view property photos and videos?",
+        "answer": "Click any listing to open the property page. Swipe or scroll through the image gallery, or play the embedded video if available. Qarba supports HD photos and walkthroughs for clarity."
+    },
+    {
+        "question": "Can I sort listings by newest or cheapest?",
+        "answer": " Absolutely. Use the Sort By dropdown to choose Newest, Lowest Price, or Highest Price. Qarba automatically reorganizes listings based on your choice."
+    },
+    {
+        "question": "Where can I find my account settings?",
+        "answer": "Go to Profile > Settings. From there, you can manage your password, notification preferences, and personal details."
+    },
+    {
+        "question": "How do I delete a property listing?",
+        "answer": "In My Listings, select the property and click Delete Listing. Confirm the action — once deleted, it will be removed from Qarba’s public search."
+    },
+    {
+        "question": "How do I report a problem with the site or app?",
+        "answer": "Scroll to the bottom of any page and click “Help & Support” or “Report an Issue.” You can also reach us via support@qarba.com for technical help."
+    },
+    {
+        "question": " Does Qarba have a mobile app?",
+        "answer": " Yes! Qarba is available on both Android and iOS. The app offers the same smooth navigation as the website, with real-time notifications "
+    },
+    {
+        "question": " How do I log out of my account?",
+        "answer": " Click your Profile icon in the top corner, then select Log Out. Qarba keeps your session secure until you’re ready to return."
+    },
+    {
+        "question": "I forgot my password, how do I reset it?",
+        "answer": " it happens! Just tap “Forgot Password” on the login screen, enter your registered email or phone number, and follow the reset link we send you. You’ll be able to create a new password and regain access to your Qarba account in minutes."
+    },
+    {
+        "question": " I didn’t receive the password reset email or SMS — what should I do?",
+        "answer": "First, check your Spam/Junk folder or SMS inbox. If you still don’t see it, request another reset. Make sure you entered the same email/number used when you signed up. Still stuck? Contact Qarba Support and we’ll help you recover your account safely."
+    },
+    {
+        "question": "Why is Qarba asking me to verify my phone number or email again?",
+        "answer": " To keep your account safe. Verification helps prevent unauthorized access and protects your property listings, messages, and personal data."
+    },
+    {
+        "question": ": Can I log in from multiple devices?",
+        "answer": "Yes, but Qarba may occasionally ask for verification if we detect a new device or location — just to make sure it’s really you."
+    },
+    {
+        "question": "Can someone hack my account if they know my email or phone number?",
+        "answer": "Not without your password or verification code. Qarba uses secure authentication and optional 2FA. Never share your password or SMS codes with anyone."
+    }
     
 
 ]

@@ -1,34 +1,48 @@
-document.getElementById("send-btn").addEventListener("click", sendMessage);
-document.getElementById("user-input").addEventListener("keypress", function(e) {
-    if (e.key === "Enter") sendMessage();
-});
+document.addEventListener("DOMContentLoaded", () => {
+  const chatWidget = document.getElementById("chat-widget");
+  const chatToggleBtn = document.getElementById("chat-toggle-btn");
+  const sendBtn = document.getElementById("send-btn");
+  const userInput = document.getElementById("user-input");
+  const chatBody = document.getElementById("chat-body");
 
-async function sendMessage() {
-    const input = document.getElementById("user-input");
-    const chatBox = document.getElementById("chat-box");
-    const userMessage = input.value.trim();
-    if (!userMessage) return;
+  // Toggle Chat Widget
+  chatToggleBtn.addEventListener("click", () => {
+    chatWidget.style.display = chatWidget.style.display === "flex" ? "none" : "flex";
+  });
 
-    // Display user message
-    chatBox.innerHTML += `<div class="text-right mb-2"><span class="bg-blue-500 text-white px-3 py-1 rounded-lg">${userMessage}</span></div>`;
-    input.value = "";
-    chatBox.scrollTop = chatBox.scrollHeight;
+  // Send Message
+  const sendMessage = async () => {
+    const message = userInput.value.trim();
+    if (!message) return;
+
+    appendMessage(message, "user-message");
+    userInput.value = "";
 
     try {
-        const response = await fetch("/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: userMessage })
-        });
-
-        const data = await response.json();
-        const botMessage = data.response || "Sorry, I couldn’t process that.";
-
-        // Display AI message
-        chatBox.innerHTML += `<div class="text-left mb-2"><span class="bg-gray-200 px-3 py-1 rounded-lg">${botMessage}</span></div>`;
-        chatBox.scrollTop = chatBox.scrollHeight;
-
-    } catch (error) {
-        chatBox.innerHTML += `<div class="text-left mb-2 text-red-600">Error: Could not connect to the server.</div>`;
+      const response = await fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message }),
+      });
+      const data = await response.json();
+      appendMessage(data.response, "bot-message");
+    } catch {
+      appendMessage("⚠️ Error connecting to server.", "bot-message");
     }
-}
+  };
+
+  // Handle Send Button and Enter Key
+  sendBtn.addEventListener("click", sendMessage);
+  userInput.addEventListener("keypress", (e) => {
+    if (e.key === "Enter") sendMessage();
+  });
+
+  // Append messages dynamically
+  function appendMessage(text, className) {
+    const msg = document.createElement("div");
+    msg.className = `message ${className}`;
+    msg.textContent = text;
+    chatBody.appendChild(msg);
+    chatBody.scrollTop = chatBody.scrollHeight;
+  }
+});
