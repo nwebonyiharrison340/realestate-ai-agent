@@ -1,9 +1,11 @@
+/* 🌟 Base styles */
 body {
   margin: 0;
   font-family: "Poppins", sans-serif;
   background: #f5f7fa;
 }
 
+/* 💬 Floating Chat Button */
 #chat-toggle-btn {
   position: fixed;
   bottom: 25px;
@@ -23,6 +25,7 @@ body {
   background-color: #005f8f;
 }
 
+/* 🪟 Chat Widget */
 .chat-widget {
   display: none;
   position: fixed;
@@ -44,6 +47,7 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* 🔵 Chat Header */
 .chat-header {
   background: #0077b6;
   color: #fff;
@@ -75,6 +79,7 @@ body {
   color: #e3f2fd;
 }
 
+/* 💬 Chat Body */
 .chat-body {
   flex: 1;
   overflow-y: auto;
@@ -83,15 +88,18 @@ body {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  scroll-behavior: smooth;
 }
 
+/* 🗨️ Message Bubbles */
 .message {
-  max-width: 75%;
+  max-width: 80%;
   padding: 10px 15px;
   border-radius: 15px;
   font-size: 14px;
   line-height: 1.4;
   word-wrap: break-word;
+  white-space: pre-wrap;
 }
 
 .bot-message {
@@ -107,6 +115,47 @@ body {
   border-bottom-right-radius: 0;
 }
 
+/* 🖼️ Property Images */
+.property-image {
+  width: 100%;
+  border-radius: 10px;
+  margin-top: 8px;
+  object-fit: cover;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  transition: transform 0.2s ease;
+}
+.property-image:hover {
+  transform: scale(1.02);
+}
+
+/* ✍️ Typing Indicator */
+#typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: #555;
+  padding-left: 10px;
+}
+#typing-indicator.hidden {
+  display: none;
+}
+.typing-dot {
+  width: 6px;
+  height: 6px;
+  background: #0077b6;
+  border-radius: 50%;
+  animation: typing 1s infinite ease-in-out;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes typing {
+  0%, 80%, 100% { opacity: 0.3; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-4px); }
+}
+
+/* 🧾 Chat Input */
 .chat-input {
   display: flex;
   padding: 10px;
@@ -134,4 +183,18 @@ body {
 
 .chat-input button:hover {
   background-color: #005f8f;
+}
+
+/* 📱 Responsive Design */
+@media (max-width: 480px) {
+  .chat-widget {
+    width: 90%;
+    right: 5%;
+    bottom: 100px;
+  }
+
+  #chat-toggle-btn {
+    bottom: 15px;
+    right: 15px;
+  }
 }

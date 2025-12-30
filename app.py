@@ -122,138 +122,180 @@ def fetch_agents():
         print("⚠️ Error fetching agents:", e)
         return []
 
+def fetch_blogs():
+    """Fetch live blog data from Qarba API."""
+    try:
+        response = requests.get(QARBA_CLIENT_API)
+        print("🌐 Fetching blogs from:", QARBA_CLIENT_API)
+        print("📡 Status code:", response.status_code)
+
+        if response.status_code == 200:
+            data = response.json()
+            # If it's a list, return directly
+            if isinstance(data, list):
+                print(f"✅ Blog API returned {len(data)} articles.")
+                return data
+            # If it's wrapped in "data", unwrap it
+            elif isinstance(data, dict) and "data" in data:
+                print(f"✅ Blog API (dict) returned {len(data['data'])} articles.")
+                return data["data"]
+            else:
+                print("⚠️ Unexpected blog API structure:", type(data))
+                return []
+        else:
+            print(f"⚠️ Blog API error: {response.status_code} -> {response.text[:200]}")
+            return []
+    except Exception as e:
+        print("❌ Error fetching blogs:", e)
+        return []
 
 
 
 @app.route("/chat", methods=["POST"])
 def chat():
     try:
+        #from fuzzywuzzy import fuzz
         data = request.get_json()
         user_query = data.get("message", "").strip()
         if not user_query:
             return jsonify({"response": "Please enter a question."})
 
-        # Retrieve chat history
+        # Retrieve session history and best FAQ match
         history = session.get("chat_history", [])
         best_match = find_best_faq(user_query)
 
-        # 🧠 Build context from FAQs and Qarba.com data
         context_parts = []
         if best_match:
             context_parts.append(f"FAQ info: {best_match['answer']}")
 
         try:
+            print("🌐 Fetching Qarba data...")
             properties = fetch_properties()
             agents = fetch_agents()
+            blogs = fetch_blogs()
 
-            property_data = []
-            if isinstance(properties, list):
-                property_data = properties
-            elif isinstance(properties, dict) and "data" in properties:
-                property_data = properties["data"]
-
+            # 🏠 PROPERTY CONTEXT
             matched_properties = []
-            user_terms = user_query.lower().split()
+            if isinstance(properties, list) and len(properties) > 0:
+                query_terms = user_query.lower().split()
+                for p in properties:
+                    searchable_text = " ".join([
+                        str(p.get("property_name", "")),
+                        str(p.get("location", "")),
+                        str(p.get("state", "")),
+                        str(p.get("city", "")),
+                        str(p.get("property_type_display", "")),
+                        str(p.get("listing_type_display", "")),
+                        str(p.get("rent_price", "")),
+                        str(p.get("sale_price", "")),
+                        " ".join([a.get("name", "") for a in p.get("amenities", [])])
+                    ]).lower()
 
-            # 🧩 Intelligent property matching
-            for p in property_data:
-                searchable_text = " ".join([
-                    str(p.get("property_name", "")),
-                    str(p.get("location", "")),
-                    str(p.get("city", "")),
-                    str(p.get("state", "")),
-                    str(p.get("property_type_display", "")),
-                    str(p.get("listing_type_display", "")),
-                    str(p.get("rent_price", "")),
-                    str(p.get("sale_price", "")),
-                    " ".join([a.get("name", "") for a in p.get("amenities", [])])
-                ]).lower()
+                    if any(fuzz.partial_ratio(term, searchable_text) > 70 for term in query_terms):
+                        matched_properties.append(p)
 
-                if any(term in searchable_text for term in user_terms):
-                    matched_properties.append(p)
+                # fallback if user mentions property-related terms
+                if not matched_properties and any(
+                    t in user_query.lower() for t in ["property", "house", "apartment", "flat", "selfcon", "rent", "buy", "location", "price"]
+                ):
+                    matched_properties = properties
 
-            if matched_properties:
-                context_parts.append(f"Found {len(matched_properties)} matching Qarba property results:")
-                for p in matched_properties[:10]:  # limit to 10 to avoid token overflow
-                    name = p.get("property_name", "Unnamed property")
-                    location = p.get("location", "Unknown location")
-                    price = p.get("rent_price") or p.get("sale_price") or "N/A"
-                    freq = p.get("rent_frequency", "")
-                    type_ = p.get("property_type_display", "")
-                    listing_type = p.get("listing_type_display", "")
-                    amenities = ", ".join([a.get("name", "") for a in p.get("amenities", [])])
-                    agent_name = f"{p.get('listed_by', {}).get('first_name', '')} {p.get('listed_by', {}).get('last_name', '')}".strip()
-                    context_parts.append(
-                        f"🏠 {name} — {type_} for {listing_type.lower()} at {location}. "
-                        f"Price: ₦{price:,} {freq if freq else ''}. "
-                        f"Amenities: {amenities}. "
-                        f"Agent: {agent_name or 'N/A'}."
-                    )
-            else:
-                # If no match found, still summarize
-                if property_data:
-                    context_parts.append(f"There are {len(property_data)} properties listed on Qarba.com.")
-                    sample_list = []
-                    for p in property_data[:5]:
-                        name = p.get("property_name", "Unnamed property")
+                if matched_properties:
+                    context_parts.append(f"🏠 Found {len(matched_properties)} matching properties on Qarba.com.")
+                    show_images = any(term in user_query.lower() for term in ["photo", "picture", "image", "show", "display"])
+
+                    for p in matched_properties:
+                        name = p.get("property_name", "Unnamed Property")
                         location = p.get("location", "Unknown location")
-                        price = p.get("rent_price") or p.get("sale_price") or "N/A"
+                        city = p.get("city", "")
+                        state = p.get("state", "")
+                        price = p.get("rent_price") or p.get("sale_price") or 0
+                        freq = p.get("rent_frequency", "")
                         type_ = p.get("property_type_display", "")
                         listing_type = p.get("listing_type_display", "")
-                        sample_list.append(f"{name} — {type_} for {listing_type.lower()} at {location} (₦{price:,})")
-                    context_parts.append("Some available listings:\n" + "\n".join(sample_list))
-                else:
-                    context_parts.append("No property data found on Qarba.com.")
+                        amenities = ", ".join([a.get("name", "") for a in p.get("amenities", [])]) or "No listed amenities"
+                        agent = p.get("listed_by", {}).get("first_name", "Unknown Agent")
+                        thumbnail = p.get("thumbnail", "")
 
-            # Agent info
+                        details = (
+                            f"🏘 {name}\n"
+                            f"📍 Location: {location}, {city}, {state}\n"
+                            f"🏠 Type: {type_} for {listing_type.lower()}\n"
+                            f"💰 Price: ₦{int(price):,} {freq if freq else ''}\n"
+                            f"✨ Amenities: {amenities}\n"
+                            f"👤 Agent: {agent}"
+                        )
+                        context_parts.append(details)
+
+                        if show_images and thumbnail:
+                            context_parts.append(f"[IMAGE]{thumbnail}[/IMAGE]")
+                else:
+                    context_parts.append("⚠️ No matching properties found on Qarba.com.")
+
+            # 👥 AGENT CONTEXT
             if isinstance(agents, dict) and agents.get("data"):
-                context_parts.append(f"There are {len(agents['data'])} registered agents available on Qarba.com.")
+                context_parts.append(f"👥 There are {len(agents['data'])} verified agents available on Qarba.com.")
+
+            # 📰 --- BLOG CONTEXT (fixed) ---
+            if isinstance(blogs, list) and len(blogs) > 0:
+             blog_terms = ["blog", "news", "article", "post"]
+             if any(term in user_query.lower() for term in blog_terms):
+                   context_parts.append(f"📰 Qarba currently has {len(blogs)} blog article(s). Here are some:")
+        
+             for b in blogs[:5]:  # show only first 5
+                     title = b.get("title", "Untitled Blog")
+                     author = b.get("writers_name", "Unknown Author")
+                     summary = b.get("summary", "No summary available.")
+                     date = b.get("created_at", "Unknown Date")
+                     cover = b.get("cover_image_url", "")
+
+            blog_text = (
+                f"📝 Title: {title}\n"
+                f"👤 Author: {author}\n"
+                f"📅 Published: {date}\n"
+                f"🗒 Summary: {summary.strip()}"
+            )
+            context_parts.append(blog_text)
+
+            # Include cover image if user asks for it
+            if any(t in user_query.lower() for t in ["photo", "image", "cover"]) and cover:
+                context_parts.append(f"[IMAGE]{cover}[/IMAGE]")
+
+
 
         except Exception as e:
             print("⚠️ Error fetching Qarba data:", e)
 
-        # Build final context for AI
-        context = "\n".join(context_parts) if context_parts else "No extra data found."
+        # Combine all context
+        context = "\n\n".join(context_parts) if context_parts else "No Qarba data found."
 
         headers = {
             "Authorization": f"Bearer {OPENAI_API_KEY}",
             "Content-Type": "application/json"
         }
 
-        # 🧩 Build the conversation for AI
-        conversation = [
-            {
-                "role": "system",
-                "content": (
-                    "You are QARBA — a smart real estate AI assistant for Qarba.com.\n"
-                    "You use live Qarba data (properties, agents, clients) to answer user questions.\n"
-                    "When a user searches, show accurate details such as property name, location, type, price, frequency, "
-                    "agent name, and amenities in a clean, human-readable format — no markdown or asterisks.\n"
-                    "If multiple results exist, summarize neatly.\n"
-                    "Never invent or guess details."
-                )
-            }
-        ]
+        # 🧠 Build AI conversation
+        conversation = [{
+            "role": "system",
+            "content": (
+                "You are QARBA — a professional AI real estate assistant for Qarba.com.\n"
+                "Answer user queries using Qarba's live property, agent, and blog data.\n"
+                "Always reply clearly and cleanly — avoid markdown asterisks or special symbols.\n"
+                "If a property has an [IMAGE] tag, it represents the property's picture.\n"
+                "If the user asks for property details, summarize all details clearly."
+            )
+        }]
 
-        # Add previous history
+        # Append chat history
         for h in history:
             conversation.append({"role": "user", "content": h["user"]})
             conversation.append({"role": "assistant", "content": h["bot"]})
 
-        # Add new user query and context
+        # Append new query
         conversation.append({
             "role": "user",
-            "content": f"""
-User asked: {user_query}
-
-<qarba_data>
-{context}
-</qarba_data>
-"""
+            "content": f"User asked: {user_query}\n\n<QarbaContext>\n{context}\n</QarbaContext>"
         })
-
-        # Shorten if too long (avoid token overflow)
-        conversation = conversation[-10:]
 
         payload = {
             "model": "google/gemma-2-9b-it",
@@ -269,7 +311,7 @@ User asked: {user_query}
 
         ai_message = result["choices"][0]["message"]["content"].strip()
 
-        # Save recent chat history (last 5)
+        # Save chat history (keep only last 5)
         history.append({"user": user_query, "bot": ai_message})
         session["chat_history"] = history[-5:]
 
@@ -277,7 +319,7 @@ User asked: {user_query}
 
     except Exception as e:
         print("❌ Error in chat:", e)
-        return jsonify({"response": "An error occurred while processing your request."})
+        return jsonify({"response": "An internal error occurred. Please try again later."})
 
 
 

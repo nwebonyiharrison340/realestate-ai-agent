@@ -16,7 +16,7 @@
   <!-- Chat Widget -->
   <div class="chat-widget" id="chat-widget">
     <div class="chat-header">
-      <img src="{{ url_for('static', filename='Qarba_logo-removebg-preview.png') }}" alt="Qarba Logo">
+      <img src="{{ url_for('static', filename='Qarba_logo-removebg-preview.png') }}" alt="Qarba Logo" class="chat-logo">
       <div class="brand-info">
         <h2>Tinah</h2>
         <p>Revolutionizing real estate across Nigeria through innovation, transparency, and service.</p>
@@ -27,9 +27,22 @@
       <!-- Messages will appear here -->
     </div>
 
+    <!-- Qarba is typing indicator -->
+    <div id="typing-indicator" class="typing-indicator hidden">
+      <span class="dot"></span>
+      <span class="dot"></span>
+      <span class="dot"></span>
+      <p>Tinah is typing...</p>
+    </div>
+
     <div class="chat-input">
-      <input type="text" id="user-input" placeholder="Type your message..." />
-      <button id="send-btn">Send</button>
+      <input 
+        type="text" 
+        id="user-input" 
+        placeholder="Type your message..." 
+        onkeypress="if(event.key === 'Enter'){ sendMessage(); }"
+      />
+      <button id="send-btn" onclick="sendMessage()">Send</button>
     </div>
   </div>
 
