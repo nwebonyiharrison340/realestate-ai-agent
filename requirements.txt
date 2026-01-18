@@ -4,3 +4,4 @@ python-dotenv
 gunicorn
 fuzzywuzzy
 requests
+sentence-transformers
