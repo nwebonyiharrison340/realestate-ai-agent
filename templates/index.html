@@ -4,48 +4,64 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Qarba Real Estate Assistant</title>
+
+  <!-- Poppins font — properly loaded (was missing before) -->
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 
-  <!-- Floating Chat Button -->
-  <div id="chat-toggle-btn">
-    💬 Chat with Tinah
+  <!-- Floating Chat Toggle Button (draggable) -->
+  <div id="chat-toggle-btn" title="Chat with Tinah">
+    <span class="btn-icon">💬</span>
+    <span class="btn-label">Chat with Tinah</span>
   </div>
 
-  <!-- Chat Widget -->
+  <!-- Chat Widget (draggable) -->
   <div class="chat-widget" id="chat-widget">
-    <div class="chat-header">
-      <img src="{{ url_for('static', filename='Qarba_logo-removebg-preview.png') }}" alt="Qarba Logo" class="chat-logo">
+
+    <!-- Header — drag handle -->
+    <div class="chat-header" id="chat-drag-handle">
+      <img
+        src="{{ url_for('static', filename='Qarba_logo-removebg-preview.png') }}"
+        alt="Qarba Logo"
+        class="chat-logo"
+      >
       <div class="brand-info">
         <h2>Tinah</h2>
-        <p>Revolutionizing real estate across Nigeria through innovation, transparency, and service.</p>
+        <p>Your Qarba Property Assistant</p>
+      </div>
+      <button class="chat-close-btn" id="chat-close-btn" title="Close chat">✕</button>
+    </div>
+
+    <!-- Messages -->
+    <div class="chat-body" id="chat-body">
+      <!-- Starter welcome message -->
+      <div class="message bot-message welcome-message">
+        <span class="welcome-emoji">👋</span>
+        <span>Hi! I'm <strong>Tinah</strong>, your Qarba property assistant. I can help you find properties, answer questions about Qarba, browse our blog, and more.<br><br>What can I help you with today?</span>
       </div>
     </div>
 
-    <div class="chat-body" id="chat-body">
-      <!-- Messages will appear here -->
-    </div>
-
-    <!-- Qarba is typing indicator -->
-    <div id="typing-indicator" class="typing-indicator hidden">
-      <span class="dot"></span>
-      <span class="dot"></span>
-      <span class="dot"></span>
-      <p>Tinah is typing...</p>
-    </div>
-
+    <!-- Input bar -->
     <div class="chat-input">
-      <input 
-        type="text" 
-        id="user-input" 
-        placeholder="Type your message..." 
-        onkeypress="if(event.key === 'Enter'){ sendMessage(); }"
+      <input
+        type="text"
+        id="user-input"
+        placeholder="Ask about properties, Qarba, and more…"
+        autocomplete="off"
       />
-      <button id="send-btn" onclick="sendMessage()">Send</button>
+      <button id="send-btn">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13"></line>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+        </svg>
+      </button>
     </div>
+
   </div>
 
-  <script src="{{ url_for('static', filename='script.js') }}"></script>
+  <!-- script.js loaded at bottom — defer ensures DOM is ready -->
+  <script defer src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>

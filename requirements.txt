@@ -5,3 +5,5 @@ gunicorn
 fuzzywuzzy
 requests
 sentence-transformers
+beautifulsoup4
+flask-limiter

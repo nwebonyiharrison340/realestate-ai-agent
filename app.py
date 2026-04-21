@@ -1,383 +1,1837 @@
+"""
+Tinah — Qarba Real Estate AI Assistant (app.py)
+─────────────────────────────────────────────────────────────────────────────
+Agentic architecture:  gpt-4o-mini via OpenRouter  +  5 tools:
+  1. search_properties  — live Qarba property listings
+  2. search_blogs       — Qarba blog articles
+  3. answer_faq         — local FAQ knowledge base
+  4. browse_website     — scrapes any Qarba public page (Next.js SSR aware)
+  5. search_agents      — INACTIVE until QARBA_AGENT_API is added to .env
+
+Cache: TTL-based (60 min) — auto-heals stale/error data, thread-safe.
+─────────────────────────────────────────────────────────────────────────────
+"""
+
 from flask import Flask, request, jsonify, render_template, session
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from fuzzywuzzy import fuzz
 from dotenv import load_dotenv
+from bs4 import BeautifulSoup
 import numpy as np
 import os
+import re
 import json
+import time
 import requests
-from openai import OpenAI
+import threading
 
-# Load environment variables
+# ═══════════════════════════════════════════════════════════════════════════════
+# 1. ENVIRONMENT
+# ═══════════════════════════════════════════════════════════════════════════════
 load_dotenv()
-print(" Loaded OpenAI Key:", os.getenv("OPENAI_API_KEY"))
-print("✅ Loaded Qarba Agent API:", os.getenv("QARBA_AGENT_API"))
-print("✅ Loaded Qarba Property API:", os.getenv("QARBA_PROPERTY_API"))
-print("✅ Loaded Qarba Client API:", os.getenv("QARBA_CLIENT_API"))
 
+OPENAI_API_KEY     = os.getenv("OPENAI_API_KEY")
+OPENAI_BASE_URL    = os.getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
+QARBA_PROPERTY_API = os.getenv("QARBA_PROPERTY_API", "https://api.qarba.com/api/v1/properties/")
+QARBA_BLOG_API     = os.getenv("QARBA_CLIENT_API",   "https://api.qarba.com/api/v1/blogs/")
+QARBA_AGENT_API    = os.getenv("QARBA_AGENT_API")     # optional — activate later
+
+#print("✅ OPENAI_API_KEY    :", bool(OPENAI_API_KEY))
+print("✅ OPENAI_BASE_URL   :", OPENAI_BASE_URL)
+print("✅ PROPERTY_API      :", QARBA_PROPERTY_API)
+print("✅ BLOG_API          :", QARBA_BLOG_API)
+print("✅ AGENT_API         :", QARBA_AGENT_API or "NOT SET (agent tool inactive)")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2. FLASK APP
+# ═══════════════════════════════════════════════════════════════════════════════
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY", "supersecret")
+app.secret_key = os.getenv("SECRET_KEY", "supersecret_change_me")
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")
-QARBA_AGENT_API = os.getenv("QARBA_AGENT_API")
-QARBA_PROPERTY_API = os.getenv("QARBA_PROPERTY_API")
-QARBA_CLIENT_API = os.getenv("QARBA_CLIENT_API")
+# ─── Rate Limiting ────────────────────────────────────────────────────────────
+# Prevents a single user from spamming the /chat endpoint and exhausting
+# OpenRouter credits. Limit: 15 requests per minute per IP address.
+# Falls back gracefully if Flask-Limiter is not installed.
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+    limiter = Limiter(
+        app=app,
+        key_func=get_remote_address,
+        default_limits=[],
+        storage_uri="memory://",
+    )
+    _limiter_available = True
+    print("✅ Rate limiter active (15 req/min per IP)")
+except ImportError:
+    limiter          = None
+    _limiter_available = False
+    print("⚠️  flask-limiter not installed — rate limiting disabled.")
+    print("   Install with: pip install flask-limiter")
 
 
-
-client = OpenAI(
-    api_key=OPENAI_API_KEY,
-    base_url=OPENAI_BASE_URL
-)
-
-# Load sentence transformer model for semantic similarity
+# ═══════════════════════════════════════════════════════════════════════════════
+# 3. EMBEDDING MODEL
+# ═══════════════════════════════════════════════════════════════════════════════
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Load FAQs
-def load_faqs():
-    with open("faqs.json", "r", encoding="utf-8") as f:
-        data = json.load(f)
 
-    # Handle both possible JSON structures
-    if isinstance(data, dict) and "faqs" in data:
-        faqs = data["faqs"]
+# ═══════════════════════════════════════════════════════════════════════════════
+# 4. TEXT HELPERS
+# ═══════════════════════════════════════════════════════════════════════════════
+def clean_text(text: str) -> str:
+    """Strip HTML tags and collapse whitespace."""
+    text = re.sub(r"<[^>]+>", " ", str(text))
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def extract_readable_text(html: str, max_chars: int = 4000) -> str:
+    """
+    Pull clean readable text from raw HTML.
+    Works on Next.js SSR pages because the server-rendered HTML contains
+    full text content inside <main>, <article>, <section>, <p> tags.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "nav", "footer", "header",
+                     "noscript", "meta", "link", "aside"]):
+        tag.decompose()
+    main = soup.find("main") or soup.find("article") or soup.find(id="__next") or soup
+    text = main.get_text(separator=" ")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:max_chars]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 5. TTL CACHE
+# ═══════════════════════════════════════════════════════════════════════════════
+class TTLCache:
+    """
+    Thread-safe in-process cache with 60-minute TTL.
+    Errors are NOT cached so failed fetches self-heal on the next request.
+    """
+    TTL_SECONDS = 3600  # 60 minutes
+
+    def __init__(self):
+        self._store = {}
+        self._lock  = threading.Lock()
+
+    def get(self, key):
+        with self._lock:
+            entry = self._store.get(key)
+            if entry and (time.time() - entry["ts"]) < self.TTL_SECONDS:
+                return entry["data"]
+            return None
+
+    def set(self, key, data):
+        with self._lock:
+            self._store[key] = {"data": data, "ts": time.time()}
+
+    def clear(self):
+        with self._lock:
+            self._store.clear()
+
+    def info(self) -> dict:
+        with self._lock:
+            now = time.time()
+            return {
+                k: {
+                    "age_seconds": int(now - v["ts"]),
+                    "expires_in":  max(0, int(self.TTL_SECONDS - (now - v["ts"]))),
+                    "records":     len(v["data"]) if isinstance(v["data"], list) else "text",
+                }
+                for k, v in self._store.items()
+            }
+
+_cache = TTLCache()
+
+
+# ─── Cache pre-warmer ─────────────────────────────────────────────────────────
+# Loads all 490+ properties and blogs into cache on startup in a background
+# thread so the first real user request is served instantly, not after a
+# 30-60 second wait while 42 pages of properties are fetched sequentially.
+def _prewarm_cache():
+    print("🔥 Pre-warming cache in background...")
+    fetch_properties()
+    fetch_blogs()
+    print("✅ Cache pre-warm complete.")
+
+threading.Thread(target=_prewarm_cache, daemon=True).start()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 6. API FETCHERS
+# ═══════════════════════════════════════════════════════════════════════════════
+_HEADERS = {"User-Agent": "TinahBot/2.0"}
+
+
+def _unwrap(raw) -> list:
+    """
+    Unwrap any Qarba API response shape into a plain list.
+
+    Handles all known shapes:
+      - bare list:                              [...]
+      - {"data": [...]}                         flat list inside data
+      - {"data": {"results": [...], ...}}       paginated (live Qarba shape)
+    """
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, dict):
+        data = raw.get("data", raw)
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            results = data.get("results", [])
+            if isinstance(results, list):
+                return results
+    return []
+
+
+def _fetch_json(url: str, cache_key: str, label: str) -> list:
+    """
+    Fetch a JSON list from a Qarba API endpoint with TTL caching.
+    Uses _unwrap() to handle all response shapes.
+    """
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        print(f"📦 {label}: served from cache.")
+        return cached
+
+    print(f"🌐 Fetching {label}...")
+    try:
+        resp = requests.get(url, headers=_HEADERS, timeout=20)
+        if resp.status_code != 200:
+            print(f"⚠️  {label} API {resp.status_code}: {resp.text[:200]}")
+            return []
+        data = _unwrap(resp.json())
+        if not data:
+            print(f"⚠️  {label}: no records found in response.")
+            return []
+        print(f"✅ {label}: {len(data)} records fetched.")
+        _cache.set(cache_key, data)
+        return data
+    except Exception as e:
+        print(f"❌ {label} fetch error:", e)
+        return []
+
+
+def fetch_properties() -> list:
+    """
+    Fetch ALL properties across all pages.
+    Qarba property API is paginated:
+      {"data": {"count": 490, "next": "...?page=2", "results": [...]}}
+    We follow "next" until null, then cache the full list.
+    """
+    cached = _cache.get("properties")
+    if cached is not None:
+        print(f"📦 Properties: served from cache ({len(cached)} records).")
+        return cached
+
+    all_props = []
+    url       = QARBA_PROPERTY_API
+    page      = 1
+
+    while url:
+        print(f"🌐 Fetching Properties page {page}...")
+        try:
+            resp = requests.get(url, headers=_HEADERS, timeout=20)
+            if resp.status_code != 200:
+                print(f"⚠️  Properties page {page} error: {resp.status_code}")
+                break
+            raw     = resp.json()
+            results = _unwrap(raw)
+            if not results:
+                print(f"⚠️  Properties page {page}: no results found.")
+                break
+            all_props.extend(results)
+
+            # Follow the "next" pagination link
+            data_block = raw.get("data", {}) if isinstance(raw, dict) else {}
+            url        = data_block.get("next") if isinstance(data_block, dict) else None
+            page      += 1
+
+        except Exception as e:
+            print(f"❌ Properties page {page} fetch error:", e)
+            break
+
+    if all_props:
+        print(f"✅ Properties: {len(all_props)} total across {page - 1} page(s).")
+        _cache.set("properties", all_props)
+        # Build the embedding index in a background thread so it doesn't
+        # block the pre-warm or the first user request
+        threading.Thread(
+            target=_build_property_index,
+            args=(all_props,),
+            daemon=True
+        ).start()
     else:
-        faqs = data
+        print("⚠️  Properties: no data retrieved.")
 
-    # Debug: show first FAQ entry
-    if len(faqs) > 0:
-        print(" First FAQ loaded:", faqs[0])
-    else:
-        print(" No FAQs found in JSON!")
+    return all_props
 
-    valid_faqs = []
-    for faq in faqs:
-        question = faq.get("question")
-        answer = faq.get("answer")
 
-        if question and answer:
-            faq["embedding"] = embedding_model.encode(question)
-            valid_faqs.append(faq)
-        else:
-            print(f" Skipping invalid FAQ entry: {faq}")
+def fetch_blogs() -> list:
+    return _fetch_json(QARBA_BLOG_API, "blogs", "Blogs")
 
-    print(f" Loaded {len(valid_faqs)} valid FAQs.")
-    return valid_faqs
+def fetch_agents() -> list:
+    if not QARBA_AGENT_API:
+        return []
+    return _fetch_json(QARBA_AGENT_API, "agents", "Agents")
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 7. FAQ LOADER
+# ═══════════════════════════════════════════════════════════════════════════════
+def load_faqs() -> list:
+    try:
+        with open("faqs.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+        raw = data["faqs"] if (isinstance(data, dict) and "faqs" in data) else data
+    except FileNotFoundError:
+        print("⚠️  faqs.json not found — FAQ tool disabled.")
+        return []
+    except Exception as e:
+        print("⚠️  faqs.json load error:", e)
+        return []
+
+    valid = []
+    for faq in raw:
+        q, a = faq.get("question"), faq.get("answer")
+        if q and a:
+            faq["embedding"] = embedding_model.encode(q)
+            valid.append(faq)
+    print(f"✅ FAQs: {len(valid)} loaded.")
+    return valid
 
 faqs = load_faqs()
 
 
-# Semantic FAQ Finder
-def find_best_faq(user_query):
-    user_embedding = embedding_model.encode(user_query)
-    similarities = [cosine_similarity([user_embedding], [faq["embedding"]])[0][0] for faq in faqs]
-    best_index = int(np.argmax(similarities))
-    best_score = similarities[best_index]
-    return faqs[best_index] if best_score > 0.65 else None
+def find_best_faq(query: str):
+    if not faqs:
+        return None
+    user_emb = embedding_model.encode(query)
+    scores   = [cosine_similarity([user_emb], [f["embedding"]])[0][0] for f in faqs]
+    best_idx = int(np.argmax(scores))
+    return faqs[best_idx] if scores[best_idx] > 0.65 else None
 
-from flask import session  # add this import at the top if not already there
 
-import requests
-from functools import lru_cache
+# ═══════════════════════════════════════════════════════════════════════════════
+# 8. PROPERTY SEARCH ENGINE
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# ARCHITECTURE — three-stage pipeline:
+#
+# Stage 1 — HARD FILTERS (run before any scoring)
+#   Extract structured criteria from the query: location (city/state), bedrooms,
+#   listing type, property type, price ceiling.  Apply them as hard yes/no
+#   filters directly against the API field values.  Only properties that pass
+#   ALL stated criteria enter Stage 2.
+#
+# Stage 2 — SOFT RANKING (score the survivors)
+#   Rank the filtered set by a weighted combination of:
+#     • Fuzzy string match on the full property text  (fast, no GPU needed)
+#     • Semantic cosine similarity via SentenceTransformer (uses pre-built index)
+#
+# Stage 3 — INTERNATIONAL GUARD
+#   If the query mentions a country or city outside Nigeria, return a clear
+#   "Qarba only covers Nigeria" message before touching any property data.
+#
+# Why this approach beats pure semantic search for this use-case:
+#   Semantic models compress meaning, so "Abuja" and "Ebonyi" both relate to
+#   "Nigeria → government → property" and score similarly.  Hard filtering on
+#   the actual state/city field values sidesteps this entirely.
+# ═══════════════════════════════════════════════════════════════════════════════
 
-@lru_cache(maxsize=1)
-def fetch_properties():
-    """Fetch all properties from Qarba API with caching."""
-    url = "https://api.qarba.com/api/v1/properties/"
-    print("🌐 Fetching Qarba properties...")
+# ── Pre-built embedding index (speeds up soft ranking) ───────────────────────
+_property_index = {
+    "texts":      [],
+    "embeddings": None,
+    "properties": [],
+}
+_index_lock = threading.Lock()
 
-    try:
-        response = requests.get(url, timeout=20)
-        if response.status_code != 200:
-            print(f"⚠️ Property API error: {response.status_code}")
-            return []
 
-        data = response.json()
-        # ✅ Qarba’s data is inside the "data" key
-        if isinstance(data, dict) and "data" in data:
-            props = data["data"]
-            print(f"✅ Loaded {len(props)} properties from Qarba API.")
-            return props
+def _build_property_index(properties: list):
+    """Encode all property texts once; reused for every search."""
+    with _index_lock:
+        texts = [_property_text(p) for p in properties]
+        print(f"🧠 Building embedding index for {len(properties)} properties...")
+        embeddings = embedding_model.encode(texts, batch_size=64, show_progress_bar=False)
+        _property_index["texts"]      = texts
+        _property_index["embeddings"] = embeddings
+        _property_index["properties"] = properties
+        print("✅ Embedding index ready.")
 
-        elif isinstance(data, list):
-            # Just in case the API returns a bare list
-            print(f"✅ Loaded {len(data)} properties (list format).")
-            return data
 
-        else:
-            print("⚠️ Unexpected property API format.")
-            return []
+def _property_text(p: dict) -> str:
+    """Canonical text representation of a property for embedding/fuzzy matching."""
+    amenity_names = " ".join(a.get("name", "") for a in (p.get("amenities") or []))
+    bedrooms = p.get("bedrooms") or 0
+    bed_str  = f"{bedrooms} bedroom" if bedrooms else ""
+    return clean_text(" ".join([
+        str(p.get("property_name",         "")),
+        str(p.get("location",              "")),
+        str(p.get("city",                  "")),
+        str(p.get("state",                 "")),
+        str(p.get("property_type_display", "")),
+        str(p.get("listing_type_display",  "")),
+        bed_str,
+        amenity_names,
+    ]))
 
-    except Exception as e:
-        print("❌ Error fetching Qarba properties:", e)
+
+# ── International location guard ─────────────────────────────────────────────
+INTERNATIONAL_LOCATIONS = {
+    "canada", "usa", "united states", "america", "uk", "united kingdom",
+    "england", "ghana", "kenya", "south africa", "egypt", "ethiopia",
+    "cameroon", "senegal", "tanzania", "uganda", "rwanda", "zimbabwe",
+    "zambia", "angola", "mozambique", "botswana", "namibia", "malawi",
+    "australia", "new zealand", "germany", "france", "italy", "spain",
+    "portugal", "netherlands", "belgium", "sweden", "norway", "denmark",
+    "china", "japan", "india", "brazil", "mexico", "argentina",
+    "dubai", "uae", "qatar", "saudi arabia", "kuwait", "bahrain",
+    "london", "new york", "toronto", "accra", "nairobi", "johannesburg",
+    "cape town", "cairo", "paris", "berlin", "sydney",
+    "los angeles", "chicago", "houston", "miami", "atlanta",
+}
+
+
+def _check_international(query: str):
+    """Return detected international location name, or None."""
+    q = query.lower()
+    for loc in sorted(INTERNATIONAL_LOCATIONS, key=len, reverse=True):
+        if loc in q:
+            return loc
+    return None
+
+
+# ── Query parser — extract hard filter criteria ───────────────────────────────
+import re as _re
+
+# Nigerian states — both short form and "X State" variant
+_NIGERIAN_STATES = [
+    "abia", "adamawa", "akwa ibom", "anambra", "bauchi", "bayelsa",
+    "benue", "borno", "cross river", "delta", "ebonyi", "edo", "ekiti",
+    "enugu", "gombe", "imo", "jigawa", "kaduna", "kano", "katsina",
+    "kebbi", "kogi", "kwara", "lagos", "nasarawa", "niger", "ogun",
+    "ondo", "osun", "oyo", "plateau", "rivers", "sokoto", "taraba",
+    "yobe", "zamfara", "abuja", "fct",
+]
+
+# Nigerian cities / areas known to appear in Qarba listings
+_NIGERIAN_CITIES = [
+    "abakaliki", "ugwuachara", "port harcourt", "lagos island",
+    "lekki", "victoria island", "ikoyi", "yaba", "surulere", "ajah",
+    "ikeja", "festac", "gbagada", "magodo", "maryland", "ojodu",
+    "wuse", "garki", "maitama", "asokoro", "gwarinpa", "kubwa",
+    "lokogoma", "apo", "jabi", "utako", "gudu", "lugbe",
+    "rumuola", "rumuokoro", "trans amadi", "old gra", "new gra", "gra",
+    "aba", "umuahia", "owerri", "onitsha", "awka", "nnewi",
+    "benin city", "warri", "asaba", "sapele", "calabar", "uyo",
+    "akure", "ado ekiti", "ibadan", "abeokuta", "ilorin",
+    "minna", "lokoja", "jos", "kaduna city", "kano city",
+]
+
+# Property type synonyms → canonical display value substrings
+_PROPERTY_TYPE_MAP = {
+    "apartment": "apartment", "flat": "flat", "bungalow": "bungalow",
+    "duplex": "duplex", "self contain": "self", "selfcon": "self",
+    "self-con": "self", "studio": "studio", "penthouse": "penthouse",
+    "land": "land", "shop": "shop", "office": "office",
+    "commercial": "commercial", "warehouse": "warehouse",
+    "terrace": "terrace", "mansion": "mansion", "villa": "villa",
+    "townhouse": "townhouse", "house": "house",
+}
+
+# Listing type synonyms
+_LISTING_TYPE_MAP = {
+    "rent": "rent", "rental": "rent", "for rent": "rent",
+    "lease": "rent", "let": "rent",
+    "buy": "sale", "purchase": "sale", "for sale": "sale",
+    "sale": "sale", "sell": "sale",
+    "shortlet": "shortlet", "short let": "shortlet",
+    "short-let": "shortlet", "shortterm": "shortlet",
+}
+
+# Price extraction pattern: optional ₦, digits, optional k/m suffix
+_PRICE_RE = _re.compile(
+    r"(?:under|below|less than|max|maximum|not more than|within)?\s*"
+    r"[₦#]?\s*(\d[\d,]*)\s*(k|thousand|m|million)?",
+    _re.IGNORECASE
+)
+
+# Bedroom extraction
+_BED_RE = _re.compile(r"(\d+)\s*(?:bed(?:room)?s?|br)", _re.IGNORECASE)
+
+# Amenity synonym map → exact Qarba amenity name (from API inspection)
+# Keys are user query terms; values are the exact name stored in the API.
+# All 13 Qarba amenities are covered. Add new ones as Qarba expands.
+_AMENITY_MAP = {
+    # Visitors toilet
+    "visitors toilet":   "Visitors toilet",
+    "visitor toilet":    "Visitors toilet",
+    "guest toilet":      "Visitors toilet",
+    "visitor wc":        "Visitors toilet",
+    # Ensuite bedrooms
+    "ensuite":           "Ensuite bedrooms",
+    "en suite":          "Ensuite bedrooms",
+    "en-suite":          "Ensuite bedrooms",
+    "ensuite bedroom":   "Ensuite bedrooms",
+    # Parking space
+    "parking":           "Parking space",
+    "parking space":     "Parking space",
+    "car park":          "Parking space",
+    "garage":            "Parking space",
+    "car space":         "Parking space",
+    # Modern kitchen
+    "modern kitchen":    "Modern kitchen",
+    "fitted kitchen":    "Modern kitchen",
+    "kitchen":           "Modern kitchen",
+    # Dining
+    "dining":            "Dining",
+    "dining room":       "Dining",
+    "dining area":       "Dining",
+    # Wardrobes
+    "wardrobe":          "Wardrobes",
+    "wardrobes":         "Wardrobes",
+    "built in wardrobe": "Wardrobes",
+    "inbuilt wardrobe":  "Wardrobes",
+    # CCTV Camera
+    "cctv":              "CCTV Camera",
+    "cctv camera":       "CCTV Camera",
+    "security camera":   "CCTV Camera",
+    "surveillance":      "CCTV Camera",
+    # Internet / Wi-Fi
+    "wifi":              "Internet/Wi-Fi",
+    "wi-fi":             "Internet/Wi-Fi",
+    "internet":          "Internet/Wi-Fi",
+    "wi fi":             "Internet/Wi-Fi",
+    "broadband":         "Internet/Wi-Fi",
+    # Swimming pool
+    "swimming pool":     "Swimming pool",
+    "pool":              "Swimming pool",
+    "swim":              "Swimming pool",
+    # Security Guard
+    "security guard":    "Security Guard",
+    "gateman":           "Security Guard",
+    "gate man":          "Security Guard",
+    "security":          "Security Guard",
+    "guard":             "Security Guard",
+    # POP Ceiling
+    "pop ceiling":       "POP Ceiling",
+    "pop":               "POP Ceiling",
+    "false ceiling":     "POP Ceiling",
+    "ceiling":           "POP Ceiling",
+    # Electricity
+    "electricity":       "Electricity",
+    "prepaid meter":     "Electricity",
+    "light":             "Electricity",
+    "power":             "Electricity",
+    "meter":             "Electricity",
+    # Water supply
+    "water supply":      "Water supply",
+    "running water":     "Water supply",
+    "borehole":          "Water supply",
+    "tap water":         "Water supply",
+    "water":             "Water supply",
+}
+
+
+
+def _parse_query(query: str) -> dict:
+    """
+    Extract structured search criteria from a natural language query.
+    Returns a dict with keys: locations, states, property_type, listing_type,
+    min_beds, max_beds, max_price.
+    All values are None/[] when not detected.
+    """
+    q = query.lower()
+    criteria = {
+        "locations":     [],   # city/area names found
+        "states":        [],   # state names found
+        "property_type": None, # substring to match against property_type_display
+        "listing_type":  None, # substring to match against listing_type_display
+        "min_beds":      None,
+        "max_beds":      None,
+        "max_price":     None,
+        "amenities":     [],   # exact Qarba amenity names required
+    }
+
+    # States (check longer names first to avoid "rivers" matching in "delivers")
+    for state in sorted(_NIGERIAN_STATES, key=len, reverse=True):
+        # Match whole word only
+        if _re.search(r"\b" + _re.escape(state) + r"\b", q):
+            criteria["states"].append(state)
+
+    # Cities / areas
+    for city in sorted(_NIGERIAN_CITIES, key=len, reverse=True):
+        if city in q:
+            criteria["locations"].append(city)
+
+    # Property type
+    for keyword, canonical in sorted(_PROPERTY_TYPE_MAP.items(), key=lambda x: len(x[0]), reverse=True):
+        if keyword in q:
+            criteria["property_type"] = canonical
+            break
+
+    # Listing type
+    for keyword, canonical in sorted(_LISTING_TYPE_MAP.items(), key=lambda x: len(x[0]), reverse=True):
+        if keyword in q:
+            criteria["listing_type"] = canonical
+            break
+
+    # Bedrooms — "3 bedroom", "2 bed", "4br"
+    bed_matches = _BED_RE.findall(q)
+    if bed_matches:
+        counts = [int(m) for m in bed_matches]
+        criteria["min_beds"] = min(counts)
+        criteria["max_beds"] = max(counts)
+
+    # Price ceiling
+    price_matches = _PRICE_RE.findall(q)
+    for amount_str, suffix in price_matches:
+        amount = float(amount_str.replace(",", ""))
+        suffix = suffix.lower() if suffix else ""
+        if suffix in ("k", "thousand"):
+            amount *= 1_000
+        elif suffix in ("m", "million"):
+            amount *= 1_000_000
+        if amount > 1000:  # ignore tiny numbers like "3 bedroom"
+            criteria["max_price"] = amount
+            break
+
+    # Amenities — check longer phrases first to avoid "pool" matching "pool table"
+    for keyword, canonical in sorted(_AMENITY_MAP.items(), key=lambda x: len(x[0]), reverse=True):
+        if keyword in q:
+            if canonical not in criteria["amenities"]:
+                criteria["amenities"].append(canonical)
+
+    return criteria
+
+
+def _normalise(s) -> str:
+    """Lowercase + strip for consistent comparison."""
+    return str(s or "").lower().strip()
+
+
+def _hard_filter(properties: list, criteria: dict) -> list:
+    """
+    Apply hard yes/no filters based on extracted criteria.
+    Returns only properties that match ALL stated constraints.
+    A constraint that was NOT stated (None/[]) is skipped — does not filter.
+    """
+    result = []
+    for p in properties:
+        prop_state    = _normalise(p.get("state",    ""))
+        prop_city     = _normalise(p.get("city",     ""))
+        prop_location = _normalise(p.get("location", ""))
+        prop_type     = _normalise(p.get("property_type_display", ""))
+        prop_listing  = _normalise(p.get("listing_type_display",  ""))
+        prop_beds     = p.get("bedrooms") or 0
+        prop_rent     = p.get("rent_price")  or 0
+        prop_sale     = p.get("sale_price")  or 0
+        prop_price    = prop_rent or prop_sale
+
+        # ── Location filter ───────────────────────────────────────────────────
+        # If states were specified, property state must match one of them.
+        # State field can be "Ebonyi" or "Ebonyi State" — normalise both.
+        if criteria["states"]:
+            state_match = False
+            for s in criteria["states"]:
+                # Strip " state" suffix for comparison
+                clean_prop_state = prop_state.replace(" state", "").strip()
+                if s == clean_prop_state or s in prop_state:
+                    state_match = True
+                    break
+            if not state_match:
+                continue  # skip — property is in a different state
+
+        # If city/area was specified, it must appear in city OR location field.
+        if criteria["locations"]:
+            loc_match = False
+            for loc in criteria["locations"]:
+                if loc in prop_city or loc in prop_location:
+                    loc_match = True
+                    break
+            if not loc_match:
+                continue  # skip
+
+        # ── Property type filter ──────────────────────────────────────────────
+        if criteria["property_type"]:
+            if criteria["property_type"] not in prop_type:
+                continue
+
+        # ── Listing type filter ───────────────────────────────────────────────
+        if criteria["listing_type"]:
+            if criteria["listing_type"] not in prop_listing:
+                continue
+
+        # ── Bedroom filter ────────────────────────────────────────────────────
+        if criteria["min_beds"] is not None:
+            if prop_beds < criteria["min_beds"]:
+                continue
+        if criteria["max_beds"] is not None:
+            if prop_beds > criteria["max_beds"]:
+                continue
+
+        # ── Price ceiling filter ──────────────────────────────────────────────
+        if criteria["max_price"] is not None and prop_price > 0:
+            if prop_price > criteria["max_price"]:
+                continue
+
+        # ── Amenity filter ────────────────────────────────────────────────────
+        # Property must have ALL requested amenities.
+        # Comparison is case-insensitive against exact Qarba amenity names.
+        if criteria.get("amenities"):
+            prop_amenity_names = [
+                _normalise(a.get("name", ""))
+                for a in (p.get("amenities") or [])
+            ]
+            amenity_match = all(
+                _normalise(req) in prop_amenity_names
+                for req in criteria["amenities"]
+            )
+            if not amenity_match:
+                continue
+
+        result.append(p)
+
+    return result
+
+
+def _soft_rank(query: str, properties: list) -> list:
+    """
+    Rank a list of properties by relevance to the query.
+    Uses pre-built embedding index when available for speed,
+    falls back to fuzzy-only for small lists or when index is not ready.
+    Returns properties sorted best-first (no threshold cut — caller decides).
+    """
+    if not properties:
         return []
 
+    q_lower = query.lower()
 
+    with _index_lock:
+        index_ready = (
+            _property_index["embeddings"] is not None
+            and len(_property_index["properties"]) > 0
+            and _property_index["properties"][0] is properties[0]
+        )
 
-def fetch_agents():
-    """Fetch live agent data from Qarba API."""
-    try:
-        response = requests.get(QARBA_AGENT_API, headers={"User-Agent": "QarbaBot/1.0"})
-        if response.status_code == 200:
-            return response.json()
-        else:
-            print(f"⚠️ Agent API error: {response.status_code} -> {response.text[:200]}")
-            return []
-    except Exception as e:
-        print("⚠️ Error fetching agents:", e)
-        return []
+    if index_ready and len(properties) > 5:
+        # Fast path: look up pre-computed embeddings by position
+        with _index_lock:
+            all_props  = _property_index["properties"]
+            all_texts  = _property_index["texts"]
+            embeddings = _property_index["embeddings"]
 
-def fetch_blogs():
-    """Fetch live blog data from Qarba API."""
-    try:
-        response = requests.get(QARBA_CLIENT_API)
-        print("🌐 Fetching blogs from:", QARBA_CLIENT_API)
-        print("📡 Status code:", response.status_code)
+        # Build index map for this subset
+        prop_positions = {id(p): i for i, p in enumerate(all_props)}
+        query_emb = embedding_model.encode(query)
 
-        if response.status_code == 200:
-            data = response.json()
-            # If it's a list, return directly
-            if isinstance(data, list):
-                print(f"✅ Blog API returned {len(data)} articles.")
-                return data
-            # If it's wrapped in "data", unwrap it
-            elif isinstance(data, dict) and "data" in data:
-                print(f"✅ Blog API (dict) returned {len(data['data'])} articles.")
-                return data["data"]
+        scored = []
+        for p in properties:
+            pos = prop_positions.get(id(p))
+            if pos is not None:
+                text  = all_texts[pos]
+                sem   = float(cosine_similarity([query_emb], [embeddings[pos]])[0][0])
             else:
-                print("⚠️ Unexpected blog API structure:", type(data))
-                return []
-        else:
-            print(f"⚠️ Blog API error: {response.status_code} -> {response.text[:200]}")
-            return []
-    except Exception as e:
-        print("❌ Error fetching blogs:", e)
+                text  = _property_text(p)
+                sem   = 0.0
+            fuzzy = fuzz.partial_ratio(q_lower, text.lower()) / 100.0
+            score = 0.55 * sem + 0.45 * fuzzy
+            scored.append((score, p))
+    else:
+        # Slow path: encode on the fly (only for small subsets)
+        query_emb = embedding_model.encode(query)
+        scored    = []
+        for p in properties:
+            text  = _property_text(p)
+            sem   = float(cosine_similarity([query_emb], [embedding_model.encode(text)])[0][0])
+            fuzzy = fuzz.partial_ratio(q_lower, text.lower()) / 100.0
+            score = 0.55 * sem + 0.45 * fuzzy
+            scored.append((score, p))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [p for _, p in scored]
+
+
+def hybrid_match(query: str, items: list, text_fn) -> list:
+    """
+    Legacy entry point kept for compatibility with blog/FAQ callers.
+    For properties, tool_search_properties calls _hard_filter + _soft_rank
+    directly instead of this function.
+    For non-property items (blogs etc), falls back to fuzzy-only ranking.
+    """
+    if not items:
         return []
+    q_lower = query.lower()
+    scored  = []
+    for item in items:
+        text  = clean_text(text_fn(item))
+        fuzzy = fuzz.partial_ratio(q_lower, text.lower()) / 100.0
+        scored.append((fuzzy, item))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [item for score, item in scored if score > 0.30]
+
+
+# 9. QARBA PUBLIC PAGES — STATIC KNOWLEDGE BASE + PLAYWRIGHT FALLBACK
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# WHY STATIC CONTENT:
+# Qarba's frontend is built with Next.js in client-side rendering mode.
+# requests.get() receives the HTML shell but the actual page content is
+# injected by JavaScript after load — so scraping returns empty text.
+#
+# SOLUTION: Curated static content for key pages (reliable, instant, no cost).
+# FALLBACK: Playwright headless browser for any page not in the static store.
+#
+# TO UPDATE: Edit the text values below whenever Qarba updates a page.
+# TO ADD A NEW PAGE: Add a new key to both QARBA_PAGES and QARBA_STATIC_CONTENT.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+QARBA_PAGES = {
+    "about":                "https://qarba.com/about-us",
+    "about us":             "https://qarba.com/about-us",
+    "contact":              "https://qarba.com/contact",
+    "contact us":           "https://qarba.com/contact",
+    "privacy":              "https://qarba.com/privacy-policy",
+    "privacy policy":       "https://qarba.com/privacy-policy",
+    "terms":                "https://qarba.com/terms-conditions",
+    "terms and conditions": "https://qarba.com/terms-conditions",
+    "manage":               "https://qarba.com/manage",
+    "careers":              "https://qarba.com/careers",
+    "jobs":                 "https://qarba.com/careers",
+    "register":             "https://qarba.com/create-account",
+    "create account":       "https://qarba.com/create-account",
+    "sign up":              "https://qarba.com/create-account",
+}
+
+# ── Static knowledge base ─────────────────────────────────────────────────────
+# Fill in the real content from each page. The more detail you add here,
+# the better Tinah can answer questions about Qarba.
+# Instructions: Visit each URL, copy the key content, paste it below.
+
+QARBA_STATIC_CONTENT = {
+    "https://qarba.com/about-us": """
+Your Trusted Partner in Nigerian Real Estate
+At QARBA, we're revolutionizing property transactions across Nigeria through innovation, transparency,
+ and exceptional service. Our platform connects property seekers with their perfect spaces and helps property 
+ owners reach the right audience.
+
+ Our Core Values are:
+Trust & Security
+We prioritize the security of your transactions and personal information above all else.
+Innovation
+We continuously evolve our platform to provide cutting-edge solutions for property transactions.
+Customer First
+Your satisfaction drives every decision we make and every feature we develop.
+
+Our Mission
+To simplify real estate transactions by creating a transparent, secure, and user-friendly digital 
+environment for property buyers, renters, and sellers in Nigeria.
+
+Our Vision
+To become Nigeria's most trusted digital real estate platform, revolutionizing how people buy, sell, 
+and rent properties through innovative technology and unwavering commitment to transparency and 
+customer satisfaction.
+
+Meet the Team
+Behind QARBA is a diverse and passionate team of experts
+
+Dr. Francis Nwebonyi
+Dr. Francis Nwebonyi
+Founder & CEO
+
+Augustine Anwuchie
+Augustine Anwuchie
+Project Manager
+
+Barr Obinna Nwali
+Barr Obinna Nwali
+Legal Advisor
+
+Ngozi Paschaline
+Ngozi Paschaline
+Director of Communications
+
+Steve Tylor
+Steve Tylor
+Strategic Advisor
+
+Dr Elias Eze
+Dr Elias Eze
+Consultant
+
+Michael Nwogha
+Michael Nwogha
+Backend Engineer
+
+Godwin Chisom .H.
+Godwin Chisom .H.
+Frontend Engineer
+
+Onuorah Victor .M.
+Onuorah Victor .M.
+Product Designer
+
+Nwebonyi Harrison A
+Ai Engineer
+
+Qarba provides a wide range of property listings including residential apartments,
+houses, commercial properties, and land across major Nigerian cities including
+Lagos, Abuja, Port Harcourt, and more.
+
+Our platform enables users to search for properties by location, price, type,
+and amenities. We connect users directly with verified real estate agents to
+ensure a smooth and trustworthy property transaction experience.
+
+Vision: To be Africa's leading technology-driven real estate platform.
+Mission: To simplify property discovery and transactions for every Nigerian.
+
+Website: https://qarba.com
+    """,
+
+    "https://qarba.com/contact": """
+Contact Qarba:
+
+Contact Us
+Get in touch with us for any inquiries about properties, listings, or general questions. 
+We're here to help you with your property journey.
+
+Contact Information
+Phone
++234 815 590 1163
+
+WhatsApp
++234 815 590 1163
+
+Email
+contact@qarba.com
+
+Office Address
+10 Brackenbury Street, Ebonyi state, Nigeria
+
+Business Hours
+Monday - Saturday: 9:00 AM - 6:00 PM
+
+Ready to Get Started?
+Join thousands of satisfied customers who trust us with their property needs.
+Call Us Now
+WhatsApp Us
+
+Website contact form: https://qarba.com/contact
+Email: contact@qarba.com
+    """,
+
+    "https://qarba.com/privacy-policy": """
+QARBA Privacy Policy
+Last updated: October 17, 2025
+
+QARBA Properties ("QARBA," "we," "our," or "us") operate the QARBA website and mobile application 
+(collectively, the "Platform") as a real estate technology service that connects buyers, sellers, 
+renters, and agents.
+
+This Privacy Policy describes how we collect, use, disclose, and protect your information when you use our Platform.
+ By accessing or using QARBA, you agree to the terms of this Privacy Policy. If you do not agree, please do not
+   proceed with using the Platform.
+
+1. Information We Collect
+We collect different types of information to provide and improve our services:
+
+a. Personal Information
+When you create an account or use certain features, we may collect:
+
+Full name, email address, and phone number
+Profile information (e.g., agency name, professional license, or company details)
+Property details, descriptions, and uploaded media (images/videos/documents)
+Location data, and/or payment or financial related information, where applicable
+
+b. Usage and Log Data
+When you use QARBA, we may automatically collect:
+IP address and device identifiers
+Browser type and operating system
+Pages viewed, actions performed, and time spent on the Platform
+Access times, dates, location data, and referring URLs
+
+c. Cookies and Tracking Technologies
+QARBA and our partners may use cookies and similar technologies to:
+Recognize returning users
+Improve performance and user experience
+Deliver personalized content and advertisements
+You can manage or disable cookies through your browser settings, but doing so may affect certain features of the Platform.
+
+2. How We Use Your Information
+We use collected data to:
+Provide, maintain, and improve our Platform and services
+Facilitate property listings, communications, and transactions
+Verify user identity and prevent fraudulent activity
+Customize user experience and recommendations
+Communicate updates, promotions, or service-related information
+Comply with legal obligations and enforce our Terms and Conditions
+
+3. Sharing and Disclosure
+We do not sell or rent your personal data. However, we may share your information under these limited circumstances:
+With Service Providers: Trusted third-party vendors that assist in hosting, analytics, payment processing, or marketing.
+With Other Users: When you interact on the Platform (e.g., viewing listings or contacting an agent).
+For Legal Reasons: If required by law, regulation, or court order.
+Business Transfers: In case of a merger, acquisition, or sale of company assets.
+All third parties are obligated to use your information solely for the services they perform for QARBA.
+
+4. Data Retention
+We retain personal information as long as your account is active or as necessary to provide services and comply with 
+legal obligations. You may request deletion of your data by contacting contact@qarba.com, subject to applicable 
+retention policies or laws.
+
+5. Security
+We implement appropriate administrative, technical, and physical measures to protect your data. However, 
+please note that no online system is a 100% secure, and we cannot guarantee absolute protection against 
+unauthorized access.
+
+6. Third-Party Services
+QARBA may use or link to third-party tools and services such as:
+
+Google Analytics
+Facebook Business Tools
+These third parties may collect data as described in their respective privacy policies. We encourage you to review 
+their policies for more details.
+
+7. Links to External Websites
+Our Platform may contain links to third-party websites. QARBA is not responsible for the privacy practices or 
+content of these external sites. Please review their privacy policies before providing any personal information.
+
+8. Children's Privacy
+QARBA does not knowingly collect or process data from individuals under the age of 18. If we discover that we 
+have inadvertently collected personal data from a minor, we will promptly delete it. Parents or guardians may 
+contact contact@qarba.com to request removal.
+
+9. Your Rights
+Depending on your jurisdiction, you may have the right to:
+
+Access, correct, or delete your personal information
+Withdraw consent for marketing communications
+Request data portability or restriction of processing
+To exercise these rights, please contact us at contact@qarba.com
+
+10. Changes to This Privacy Policy
+We may update this Privacy Policy periodically, and without (prior) notice. When we do, the updated version will be 
+posted on this page with a revised date of update. Significant changes may be communicated via email or in-app 
+notification.
+
+11. Contact Us
+If you have questions, concerns, or complaints regarding this Privacy Policy or our data practices, please contact us 
+at contact@qarba.com or via our website: www.qarba.com.
+
+For the full privacy policy, visit: https://qarba.com/privacy-policy
+    """,
+
+    "https://qarba.com/terms-conditions": """
+QARBA – Terms and Conditions
+Last updated: October 22, 2025
+
+Introduction
+Welcome to QARBA, a real estate technology platform that connects buyers, sellers, renters, and agents. 
+By accessing or using our website, mobile app, or related services ("Platform"), you agree to comply with 
+and be bound by these Terms and Conditions ("Terms"). If you do not agree to these Terms, please do not use
+ our Platform.
+
+About QARBA
+QARBA provides real estate listings, property management tools, and digital services that facilitate 
+transactions between Agents, Landlords and Clients (renter/buyers). We may not act as a real estate agent
+ or broker and may not participate in direct property transactions between users. If at any point we are 
+ acting directly as an Agent, it will be explicitly made clear to both parties.
+
+User Eligibility
+You must be at least 18 years old to use our services.
+You must provide accurate, complete, and current information when creating an account.
+Real estate agents or agencies must possess valid licenses as required by law. It is your responsibility to ensure
+ you possess due licences before registering on our platform.
+You are responsible for maintaining the confidentiality of your login credentials and for all activities
+ under your account.
+You must promptly report any unauthorized access or suspicious activity on your account.
+Property Listings & Transactions
+I. Listing Requirements
+All property information, images, and descriptions must be accurate, truthful, and up to date.
+Listed properties must be legally available for sale, lease, or rent, as indicated.
+Images and videos must represent the actual property and comply with copyright laws.
+Prices must include all mandatory fees and charges.
+Listing of fake property may lead to prosecution.
+II. Transaction Rules
+All transactions conducted via the Platform must comply with applicable real estate laws.
+QARBA is not responsible for any transactions or agreements made between users.
+Users are encouraged to independently verify all property information, ownership, and legal documents.
+Payment terms must be clearly stated within listings or user agreements, and be disclosed to Qarba.
+5. User Responsibilities
+i. Account Usage
+Keep your profile information accurate and updated.
+Maintain control of your account and do not share login details.
+Report unauthorized use immediately.
+Comply with all applicable laws and regulations while using QARBA.
+ii. Prohibited Activities
+You agree not to:
+
+Post fraudulent, misleading, fake, or duplicate listings.
+Harass, discriminate, or defraud other users.
+Use automated systems to scrape, harvest, or manipulate listings.
+Upload or share content that infringes copyright or intellectual property.
+Use the Platform for illegal or prohibited activities.
+Platform Rules & Safety
+i. Safety Guidelines
+It is your responsibility to verify properties and (other) users before physical meetings.
+Use secure payment channels and avoid cash transactions (where possible).
+Report suspicious users or listings via our support system.
+Follow due safety protocols during property viewings, as much as possible, have someone accompanying you,
+ and do not go to dodgy locations.
+Do not meet at suspicious venues, and apply safety protocol.
+ii. Content Guidelines
+No discriminatory, offensive, or defamatory content.
+No false or deceptive advertising.
+Respect intellectual property and privacy rights.
+Maintain a professional and respectful tone in all communications.
+Fees and Payments
+QARBA may charge fees for certain services (e.g., subscription, premium listings, featured placements, 
+or professional tools).
+All fees are non-refundable unless otherwise stated in writing.
+Payment terms, billing cycles, and applicable taxes are disclosed at the time of purchase. 
+This may be subject to changes.
+Subscription fees may be billed according to your selected plan.
+Refunds and cancellations follow the policy provided in the applicable service agreement. 
+Generally, a no refund policy apply.
+Intellectual Property Rights
+All content, design elements, software, and trademarks on QARBA are the exclusive property of QARBA Properties.
+You may not copy, reproduce, or distribute any content from the Platform without prior written permission.
+You grant QARBA a non-exclusive, royalty-free license to display and promote your listings on the Platform and
+ partner channels.
+Disclaimer of Warranties
+QARBA provides its services on an "as is" and "as available" basis. We do not guarantee that the Platform will 
+be error-free, uninterrupted, or free of viruses. QARBA makes no warranties, express or implied, regarding the accuracy, 
+reliability, or completeness of listings or other user-generated content. Nothing on this Platform constitutes legal,
+ financial, or professional advice.
+
+Limitation of Liability
+To the maximum extent permitted by law, QARBA shall not be liable for any loss, damage, or claim arising from:
+Errors or omissions in property information;
+Transactions or disputes between users;
+Interruption of service or technical issues;
+Unauthorized access to your account or data.
+Fraudulent or fake listings or transactions.
+Other similar actions.
+In no event shall QARBA's total liability exceed the amount you paid directly to QARBA for any paid services.
+
+Indemnity
+You agree to indemnify and hold harmless QARBA, its affiliates, employees, and agents from any claims, damages, 
+liabilities, or expenses arising out of your:
+
+Violation of these Terms;
+Misuse of the Platform; or
+Violation of third-party rights, including intellectual property or privacy.
+Carelessness or inability to duly verify listings, users, or the likes.
+Termination of Account
+QARBA reserves the right to suspend or terminate your account for violations of these Terms or inappropriate behaviours.
+Users may terminate their accounts at any time by written notice or through the platform's account settings.
+Upon termination, your listings and associated data may be removed or retained per QARBA's data retention policy.
+Termination does not affect any outstanding obligations or payments owed to QARBA or other users that you may be 
+directly transacting with.
+Modification of Terms
+QARBA may update or modify these Terms at any time and without notice. Updates will be effective once published on 
+our website. Continued use of the Platform after changes constitutes your acceptance of the revised Terms.
+
+Governing Law & Jurisdiction
+These Terms shall be governed by and construed in accordance with the laws of the Federal Republic of Nigeria. 
+Any dispute arising under or in connection with these Terms shall be subject to the exclusive jurisdiction of 
+Nigerian courts.
+
+Severability
+If any provision of these Terms is found invalid or unenforceable by a court, the remaining provisions shall 
+continue in full force and effect.
+
+Contact Information
+If you have any questions, complaints, or feedback regarding these Terms or our services, 
+please contact us at: contact@qarba.com, or via our website: www.qarba.com.
+For the full terms and conditions, visit: https://qarba.com/terms-conditions
+    """,
+
+    "https://qarba.com/careers": """
+Careers at Qarba:
+
+Qarba is always looking for talented, passionate individuals to join our growing team.
+We are building the future of real estate technology in Nigeria and Africa.
+
+Open roles includes positions in software engineering, product management,
+sales, marketing, customer support, and real estate operations.
+Roles can be internship-based, full-time or hybrid.
+To view current openings or submit an application, visit: https://qarba.com/careers
+
+Why work at Qarba:
+- Be part of a fast-growing Nigerian tech company
+- Work on products used by thousands of Nigerians daily
+- Collaborative and innovative work environment
+- Competitive compensation and growth opportunities
+    """,
+
+    "https://qarba.com/manage": """
+Qarba Manage — Property Management Portal:
+
+Let Us Manage Your Properties
+Focus on your investments while we handle the day-to-day management of your properties. Our team is here to help!
+
+Property Management
+Let us handle your property portfolio with professional care and attention to detail.
+
+Listing Services
+We'll create, manage, and optimize your property listings for maximum visibility.
+
+Scheduling & Maintenance
+We'll coordinate viewings, handle maintenance requests, and manage tenant relations.
+
+Performance Tracking
+Get regular updates on your property performance, occupancy rates, and revenue.
+
+To access the management portal, visit: https://qarba.com/manage
+You will need a registered Qarba agent or seller account to use this portal.
+    """,
+
+    "https://qarba.com/create-account": """
+Create a Qarba Account:
+
+To get started on Qarba, create a free account at: https://qarba.com/create-account
+
+Registration requires:
+- Full name
+- Email address
+- Phone number
+- Password
+
+Once registered, you can:
+- Save favourite property listings
+- Contact agents directly
+- Set up property search alerts
+- List properties for sale or rent (agent/seller accounts)
+
+Account creation is free. Visit https://qarba.com/create-account to sign up.
+    """,
+}
+
+
+def scrape_qarba_page(page_hint: str) -> str:
+    """
+    Return content for a Qarba public page.
+
+    Strategy (in order):
+    1. Resolve URL from QARBA_PAGES via exact or fuzzy key match.
+    2. Return static curated content from QARBA_STATIC_CONTENT if available
+       (most reliable — bypasses Next.js CSR rendering issue entirely).
+    3. Attempt Playwright headless browser scrape as fallback (renders JS).
+    4. Attempt plain requests.get() + BeautifulSoup as last resort.
+    """
+    hint = page_hint.lower().strip()
+    url  = QARBA_PAGES.get(hint)
+
+    if not url:
+        best_score, best_url = 0, None
+        for key, page_url in QARBA_PAGES.items():
+            score = fuzz.partial_ratio(hint, key)
+            if score > best_score:
+                best_score, best_url = score, page_url
+        if best_score >= 60:
+            url = best_url
+
+    if not url and hint.startswith("http"):
+        url = hint
+
+    if not url:
+        known = ", ".join(sorted(set(QARBA_PAGES.keys())))
+        return (
+            f"I don't have '{page_hint}' in my page registry. "
+            f"Known pages: {known}. Visit qarba.com directly for more."
+        )
+
+    # ── 1. Static content (fastest, most reliable) ────────────────────────
+    static = QARBA_STATIC_CONTENT.get(url)
+    if static and len(static.strip()) > 100:
+        print(f"✅ Static content served for: {url}")
+        return static.strip()
+
+    # ── 2. Playwright headless browser (renders JavaScript) ───────────────
+    cache_key = f"page:{url}"
+    cached    = _cache.get(cache_key)
+    if cached:
+        print(f"📦 Page cache hit: {url}")
+        return cached
+
+    print(f"🌐 Attempting Playwright scrape: {url}")
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page    = browser.new_page()
+            page.goto(url, wait_until="networkidle", timeout=30000)
+            content = page.inner_text("body")
+            browser.close()
+
+        if content and len(content.strip()) > 100:
+            text = re.sub(r"\s+", " ", content).strip()[:4000]
+            print(f"✅ Playwright extracted: {len(text)} chars")
+            _cache.set(cache_key, text)
+            return text
+
+    except ImportError:
+        print("⚠️  Playwright not installed — skipping headless scrape.")
+    except Exception as e:
+        print(f"⚠️  Playwright scrape failed: {e}")
+
+    # ── 3. Plain requests + BeautifulSoup (last resort) ───────────────────
+    print(f"🌐 Attempting plain HTTP scrape: {url}")
+    try:
+        resp = requests.get(url, headers=_HEADERS, timeout=20)
+        if resp.status_code == 200:
+            text = extract_readable_text(resp.text)
+            if len(text) > 100:
+                print(f"✅ HTML extracted: {len(text)} chars")
+                _cache.set(cache_key, text)
+                return text
+    except Exception as e:
+        print(f"❌ Plain scrape error ({url}):", e)
+
+    return (
+        f"I was unable to retrieve the content for that page automatically. "
+        f"Please visit {url} directly for the most accurate information."
+    )
 
 
 
-@app.route("/chat", methods=["POST"])
+# ═══════════════════════════════════════════════════════════════════════════════
+# 10. TOOL EXECUTORS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def tool_search_properties(query: str) -> str:
+    """
+    Search Qarba property listings using a three-stage pipeline:
+      1. International guard  — reject out-of-scope queries immediately
+      2. Hard filter          — apply location, type, bedroom, price constraints
+      3. Soft rank            — order survivors by semantic + fuzzy relevance
+    """
+
+    # Stage 1 — International guard
+    intl = _check_international(query)
+    if intl:
+        return (
+            f"Qarba is a Nigerian real estate platform and currently only covers "
+            f"properties within Nigeria. I don't have listings for {intl.title()}. "
+            f"If you're looking for properties in Nigeria, I'd be happy to help — "
+            f"just let me know your preferred location within Nigeria."
+        )
+
+    # Fetch all properties (served from cache after first load)
+    properties = fetch_properties()
+    if not properties:
+        return (
+            "Property listings are temporarily unavailable. "
+            "Please visit qarba.com to browse directly."
+        )
+
+    # Stage 2 — Parse query and apply hard filters
+    criteria = _parse_query(query)
+    print(f"🔍 Search criteria: {criteria}")
+
+    filtered = _hard_filter(properties, criteria)
+    print(f"📊 Hard filter: {len(properties)} → {len(filtered)} properties")
+
+    # If hard filters eliminated everything, report clearly
+    if not filtered:
+        parts = []
+        if criteria["states"]:
+            parts.append(f"in {', '.join(s.title() for s in criteria['states'])}")
+        if criteria["locations"]:
+            parts.append(f"in {', '.join(l.title() for l in criteria['locations'])}")
+        if criteria["property_type"]:
+            parts.append(criteria["property_type"])
+        if criteria["listing_type"]:
+            parts.append(f"for {criteria['listing_type']}")
+        if criteria["min_beds"]:
+            parts.append(f"with {criteria['min_beds']} bedroom(s)")
+        if criteria["max_price"]:
+            parts.append(f"under ₦{int(criteria['max_price']):,}")
+        if criteria.get("amenities"):
+            parts.append(f"with {', '.join(criteria['amenities'])}")
+
+        desc = " ".join(parts) if parts else "matching that description"
+        return (
+            f"I couldn't find any properties {desc} on Qarba right now. "
+            f"Qarba may not have listings matching all those criteria yet. "
+            f"Try relaxing one constraint — for example, remove the price limit "
+            f"or try a nearby area. You can also browse all listings at qarba.com."
+        )
+
+    # Stage 3 — Soft rank the filtered set
+    ranked = _soft_rank(query, filtered)
+
+    # Build response
+    count = len(ranked)
+    lines = [f"Found {count} matching propert{'y' if count == 1 else 'ies'} on Qarba.com:\n"]
+
+    for p in ranked[:10]:
+        name       = p.get("property_name", "Unnamed Property")
+        location   = p.get("location", "")
+        city       = p.get("city",     "")
+        state      = p.get("state",    "")
+        price      = p.get("rent_price") or p.get("sale_price") or 0
+        freq       = p.get("rent_frequency", "")
+        ptype      = p.get("property_type_display", "")
+        ltype      = p.get("listing_type_display",  "")
+        bedrooms   = p.get("bedrooms") or 0
+        amenities  = ", ".join([a.get("name","") for a in p.get("amenities",[])]) or "None listed"
+        agent_obj  = p.get("listed_by", {})
+        agent_name = (
+            f"{agent_obj.get('first_name','')} {agent_obj.get('last_name','')}".strip()
+            or "Unknown Agent"
+        )
+        thumbnail  = p.get("thumbnail", "")
+        slug       = p.get("slug", "")
+        link       = f"https://qarba.com/properties/{slug}" if slug else "https://qarba.com"
+        price_str  = f"₦{int(price):,} {freq}".strip() if price else "Price on request"
+        bed_str    = f"{bedrooms} bed" if bedrooms else "N/A"
+
+        entry = (
+            f"Property: {name}\n"
+            f"Location: {location}, {city}, {state}\n"
+            f"Type: {ptype}  |  Listing: {ltype}  |  Bedrooms: {bed_str}\n"
+            f"Price: {price_str}\n"
+            f"Amenities: {amenities}\n"
+            f"Agent: {agent_name}\n"
+            f"Link: {link}"
+        )
+        if thumbnail:
+            entry += f"\n[IMAGE]{thumbnail}[/IMAGE]"
+        lines.append(entry)
+
+    if count > 10:
+        lines.append(f"...and {count - 10} more. Visit qarba.com to see all listings.")
+
+    return "\n\n".join(lines)
+
+
+def tool_search_blogs(query: str = "") -> str:
+    blogs = fetch_blogs()
+    if not blogs:
+        return "Blog articles are temporarily unavailable. Please visit qarba.com."
+
+    if query:
+        q        = query.lower()
+        filtered = [
+            b for b in blogs
+            if q in (b.get("title","") + b.get("summary","") + b.get("writers_name","")).lower()
+        ]
+        if filtered:
+            blogs = filtered
+        else:
+            return (
+                f"No blog articles found matching '{query}' on Qarba. "
+                f"Visit qarba.com for the latest articles."
+            )
+
+    lines = [f"Here are Qarba's latest blog articles ({len(blogs)} found):\n"]
+    for b in blogs[:6]:
+        title   = b.get("title",        "Untitled")
+        author  = b.get("writers_name", "Qarba Team")
+        summary = clean_text(b.get("summary", ""))[:250]
+        date    = b.get("created_at", "")
+        cover   = b.get("cover_image_url", "")
+        slug    = b.get("slug", "")
+        link    = f"https://qarba.com/blog/{slug}" if slug else "https://qarba.com"
+
+        entry = (
+            f"Title: {title}\n"
+            f"Author: {author}  |  Date: {date}\n"
+            f"Summary: {summary}...\n"
+            f"Read more: {link}"
+        )
+        if cover:
+            entry += f"\n[IMAGE]{cover}[/IMAGE]"
+        lines.append(entry)
+
+    return "\n\n".join(lines)
+
+
+def tool_answer_faq(question: str) -> str:
+    match = find_best_faq(question)
+    if match:
+        return f"FAQ Answer:\n{clean_text(match['answer'])}"
+    return (
+        "No FAQ entry found for that specific question. "
+        "Try asking about Qarba's services, how to list a property, or payment options."
+    )
+
+
+def tool_browse_website(page: str) -> str:
+    return scrape_qarba_page(page)
+
+
+def tool_search_agents(query: str = "") -> str:
+    if not QARBA_AGENT_API:
+        return (
+            "The agent directory is not yet available through the assistant. "
+            "Please visit qarba.com to find a verified Qarba agent."
+        )
+    agents = fetch_agents()
+    if not agents:
+        return "Agent data is temporarily unavailable."
+    if query:
+        agents = [a for a in agents if query.lower() in json.dumps(a).lower()]
+    if not agents:
+        return f"No agents found matching '{query}'. Visit qarba.com for the full directory."
+
+    lines = [f"Qarba has {len(agents)} verified agent(s):\n"]
+    for a in agents[:8]:
+        name  = f"{a.get('first_name','')} {a.get('last_name','')}".strip()
+        phone = a.get("phone_number") or a.get("phone") or "N/A"
+        email = a.get("email", "N/A")
+        lines.append(f"Agent: {name}  |  Phone: {phone}  |  Email: {email}")
+    return "\n".join(lines)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 11. TOOL REGISTRY
+# ═══════════════════════════════════════════════════════════════════════════════
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_properties",
+            "description": (
+                "Search Qarba's live property listings. "
+                "Use for ANY question about buying, renting, property prices, "
+                "locations, bedrooms, amenities, or available listings."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "Natural language description of what the user wants. "
+                            "E.g. '3-bedroom apartment in Lekki for rent under 2 million'."
+                        )
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_blogs",
+            "description": (
+                "Search Qarba's blog articles for real estate news, market updates, "
+                "property tips, and investment guides. Use when the user asks about "
+                "articles, news, blog posts, or real estate advice."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Topic or keywords. Leave empty to get latest articles."
+                    }
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "answer_faq",
+            "description": (
+                "Answer general questions about Qarba using the FAQ knowledge base. "
+                "Use for questions about how Qarba works, listing a property, "
+                "fees, payment, support, or platform policies."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "The user's question exactly as asked."
+                    }
+                },
+                "required": ["question"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browse_website",
+            "description": (
+                "Read a Qarba public webpage to answer questions about company information. "
+                "Available pages: about-us, contact, privacy-policy, terms-conditions, "
+                "manage, careers, create-account. "
+                "Use for questions about Qarba's story, mission, team, contact details, "
+                "legal policies, job openings, or how to create an account."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "page": {
+                        "type": "string",
+                        "description": (
+                            "Page name or topic. E.g. 'about', 'contact', "
+                            "'privacy', 'terms', 'careers', 'manage', 'create account'."
+                        )
+                    }
+                },
+                "required": ["page"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_agents",
+            "description": (
+                "Retrieve Qarba verified agents and their contact details. "
+                "Use when the user asks about agents, realtors, or who to contact."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Agent name or location filter. Leave empty for all agents."
+                    }
+                },
+                "required": []
+            }
+        }
+    },
+]
+
+TOOL_MAP = {
+    "search_properties": lambda args: tool_search_properties(args.get("query",    "")),
+    "search_blogs":      lambda args: tool_search_blogs(args.get("query",         "")),
+    "answer_faq":        lambda args: tool_answer_faq(args.get("question",        "")),
+    "browse_website":    lambda args: tool_browse_website(args.get("page",        "")),
+    "search_agents":     lambda args: tool_search_agents(args.get("query",        "")),
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 12. LLM CALL HELPER
+# ═══════════════════════════════════════════════════════════════════════════════
+def call_llm(messages: list, tools: list = None) -> dict:
+    payload = {
+        "model":       "openai/gpt-4o-mini",
+        "messages":    messages,
+        "max_tokens":  1024,
+        "temperature": 0.4,
+    }
+    if tools:
+        payload["tools"]       = tools
+        payload["tool_choice"] = "auto"
+
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type":  "application/json",
+    }
+
+    resp   = requests.post(
+        f"{OPENAI_BASE_URL}/chat/completions",
+        headers=headers,
+        json=payload,
+        timeout=60,
+    )
+    result = resp.json()
+    if "error" in result:
+        raise RuntimeError(f"LLM API error: {result['error']}")
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 13. SYSTEM PROMPT
+# ═══════════════════════════════════════════════════════════════════════════════
+SYSTEM_PROMPT = """You are Tinah — the official AI assistant for Qarba.com, Nigeria's intelligent real estate platform.
+
+You have four active tools:
+- search_properties  → search live Qarba property listings
+- search_blogs       → retrieve Qarba blog articles and real estate news
+- answer_faq         → answer questions using Qarba's FAQ knowledge base
+- browse_website     → read any Qarba public page (About Us, Contact, Privacy Policy, Terms, Careers, Manage, Create Account)
+
+You also have search_agents but it is currently unavailable. If a user asks about agents, direct them to qarba.com.
+
+Your rules:
+1. ALWAYS call the relevant tool before answering. Never answer property, blog, FAQ, or company questions from memory.
+2. If a user asks about Qarba's story, team, contact info, phone number, email, legal policies, or careers — call browse_website with the relevant page name.
+3. Base your answers ONLY on data returned by your tools. If a tool returns no results, say so honestly and direct the user to qarba.com.
+4. Write in clear, professional English. No markdown symbols (*, _, ##). Use plain text only.
+5. For property results, always include the property name, location, price, and link.
+6. Images in tool results appear as [IMAGE]URL[/IMAGE] — pass them through unchanged. Never describe or modify image tags.
+7. Keep answers concise. For long property lists, show the top results and mention more are available at qarba.com.
+8. Never make up property details, prices, or contact information. Only use what your tools return.
+9. You represent Qarba professionally. Be helpful, warm, and accurate at all times.
+"""
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 14. CHAT ROUTE  (agentic loop)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Rate limit applied conditionally — decorator only active when flask-limiter installed
+_chat_route = app.route("/chat", methods=["POST"])
+
+def _apply_limiter(f):
+    if _limiter_available:
+        return limiter.limit("15 per minute")(f)
+    return f
+
+@_chat_route
+@_apply_limiter
 def chat():
     try:
-        from fuzzywuzzy import fuzz
-        from semantic_utils import hybrid_match, clean_text
-
-        data = request.get_json()
-        user_query = data.get("message", "").strip().lower()
+        body       = request.get_json(force=True) or {}
+        user_query = body.get("message", "").strip()
         if not user_query:
-            return jsonify({"response": "Please enter a question."})
+            return jsonify({"response": "Please enter a message."})
 
-        history = session.get("chat_history", [])
-        best_match = find_best_faq(user_query)
+        # Sanitise input — prevent huge payloads and prompt injection attempts
+        if len(user_query) > 500:
+            return jsonify({"response": "Please keep your message under 500 characters."})
+        # Strip any attempt to inject system-level instructions
+        user_query = user_query.replace("<|system|>", "").replace("<|user|>", "").replace("<|assistant|>", "")
 
-        context_parts = []
-        if best_match:
-            context_parts.append(f"📘 FAQ info: {clean_text(best_match['answer'])}")
+        history  = session.get("chat_history", [])
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
-        try:
-            print("🌐 Fetching Qarba data...")
-            properties = fetch_properties()  # ✅ fetches ALL pages now
-            agents = fetch_agents()
-            blogs = fetch_blogs()
+        for h in history[-4:]:
+            messages.append({"role": "user",     "content": h["user"]})
+            messages.append({"role": "assistant", "content": h["bot"]})
+        messages.append({"role": "user", "content": user_query})
 
-            # ✅ PROPERTY CONTEXT — hybrid semantic + fuzzy search
-            matched_properties = []
-            if isinstance(properties, list) and len(properties) > 0:
-                matched_properties = hybrid_match(user_query, properties, lambda p: " ".join([
-                    str(p.get("property_name", "")),
-                    str(p.get("location", "")),
-                    str(p.get("state", "")),
-                    str(p.get("city", "")),
-                    str(p.get("property_type_display", "")),
-                    str(p.get("listing_type_display", "")),
-                    str(p.get("rent_price", "")),
-                    str(p.get("sale_price", "")),
-                    " ".join([a.get("name", "") for a in p.get("amenities", [])])
-                ]))
+        # ── Agentic loop — model decides which tools to call ──────────────────
+        MAX_ROUNDS = 4
+        for round_num in range(MAX_ROUNDS):
+            result = call_llm(messages, tools=TOOLS)
+            choice = result["choices"][0]
+            msg    = choice["message"]
 
-                # fallback for general queries
-                if not matched_properties and any(
-                    word in user_query for word in ["property", "house", "apartment", "flat", "selfcon", "rent", "buy", "location", "price"]
-                ):
-                    matched_properties = properties
+            messages.append(msg)
 
-                if matched_properties:
-                    context_parts.append(f"🏠 Found {len(matched_properties)} matching properties on Qarba.com.")
-                    show_images = any(term in user_query for term in ["photo", "picture", "image", "show", "display"])
+            tool_calls = msg.get("tool_calls") or []
+            if not tool_calls:
+                break   # model produced its final answer
 
-                    for p in matched_properties[:10]:  # show top 10
-                        name = p.get("property_name", "Unnamed Property")
-                        location = p.get("location", "Unknown location")
-                        city = p.get("city", "")
-                        state = p.get("state", "")
-                        price = p.get("rent_price") or p.get("sale_price") or 0
-                        freq = p.get("rent_frequency", "")
-                        type_ = p.get("property_type_display", "")
-                        listing_type = p.get("listing_type_display", "")
-                        amenities = ", ".join([a.get("name", "") for a in p.get("amenities", [])]) or "No listed amenities"
-                        agent = p.get("listed_by", {}).get("first_name", "Unknown Agent")
-                        thumbnail = p.get("thumbnail", "")
+            for tc in tool_calls:
+                fn_name = tc["function"]["name"]
+                try:
+                    fn_args = json.loads(tc["function"].get("arguments", "{}"))
+                except json.JSONDecodeError:
+                    fn_args = {}
 
-                        details = (
-                            f"🏘 {name}\n"
-                            f"📍 Location: {location}, {city}, {state}\n"
-                            f"🏠 Type: {type_} for {listing_type.lower()}\n"
-                            f"💰 Price: ₦{int(price):,} {freq if freq else ''}\n"
-                            f"✨ Amenities: {amenities}\n"
-                            f"👤 Agent: {agent}"
-                        )
-                        context_parts.append(details)
+                print(f"🔧 [{round_num + 1}] {fn_name}({fn_args})")
 
-                        if show_images and thumbnail:
-                            context_parts.append(f"[IMAGE]{thumbnail}[/IMAGE]")
-                else:
-                    context_parts.append("⚠️ No matching properties found on Qarba.com.")
+                tool_result = (
+                    TOOL_MAP[fn_name](fn_args)
+                    if fn_name in TOOL_MAP
+                    else f"Unknown tool '{fn_name}'."
+                )
 
-            # 👥 AGENT INFO
-            if isinstance(agents, dict) and agents.get("data"):
-                context_parts.append(f"👥 Qarba currently has {len(agents['data'])} verified agents available.")
+                messages.append({
+                    "role":         "tool",
+                    "tool_call_id": tc["id"],
+                    "content":      tool_result,
+                })
 
-            # 📰 BLOG CONTEXT
-            if isinstance(blogs, list) and len(blogs) > 0:
-                blog_terms = ["blog", "news", "article", "post"]
-                if any(term in user_query for term in blog_terms):
-                    context_parts.append(f"📰 Qarba currently has {len(blogs)} blog article(s). Here are some highlights:")
+        # ── Extract final reply ───────────────────────────────────────────────
+        last     = messages[-1]
+        ai_reply = (last.get("content") or "").strip()
 
-                    for b in blogs[:5]:
-                        title = b.get("title", "Untitled Blog")
-                        author = b.get("writers_name", "Unknown Author")
-                        summary = clean_text(b.get("summary", "No summary available."))
-                        date = b.get("created_at", "Unknown Date")
-                        cover = b.get("cover_image_url", "")
+        if last.get("role") == "tool" or not ai_reply:
+            ai_reply = "I wasn't able to generate a response. Please try again."
 
-                        blog_text = (
-                            f"📝 {title} by {author} ({date})\n"
-                            f"{summary[:200]}..."
-                        )
-                        context_parts.append(blog_text)
+        # Strip [IMAGE]...[/IMAGE] tags from the saved bot reply before
+        # storing in the session cookie — images make the cookie too large
+        # (Flask session limit is ~4093 bytes). The full response with images
+        # is still returned to the frontend below; only the session copy is trimmed.
+        bot_for_history = re.sub(r'\[IMAGE\].*?\[/IMAGE\]', '[image]', ai_reply, flags=re.DOTALL)
+        # Also trim very long responses in history to a summary
+        if len(bot_for_history) > 400:
+            bot_for_history = bot_for_history[:400] + "..."
 
-                        if any(t in user_query for t in ["photo", "image", "cover"]) and cover:
-                            context_parts.append(f"[IMAGE]{cover}[/IMAGE]")
+        history.append({"user": user_query, "bot": bot_for_history})
+        session["chat_history"] = history[-4:]  # keep 4 turns max to stay under cookie limit
 
-        except Exception as e:
-            print("⚠️ Error fetching Qarba data:", e)
+        return jsonify({"response": ai_reply})
 
-        # Combine all context
-        context = "\n\n".join(context_parts) if context_parts else "No Qarba data found."
-
-        # 🧠 Keep chat memory short but stable
-        summary_context = " ".join([h["bot"] for h in history[-4:]]) if len(history) > 2 else ""
-
-        headers = {
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "Content-Type": "application/json"
-        }
-
-        conversation = [{
-            "role": "system",
-            "content": (
-                "You are QARBA — a professional AI real estate assistant for Qarba.com.\n"
-                "Your language is always fluent English, neutral, and concise.\n"
-                "You use only Qarba’s real data (properties, blogs, FAQs).\n"
-                "If data is missing, reply: 'I don’t have exact data on that yet.'\n"
-                "Avoid symbols like *, _, or Markdown — use plain clean text.\n"
-                "Images are represented as [IMAGE]URL[/IMAGE]."
-            )
-        }]
-
-        # Add chat history
-        for h in history[-5:]:
-            conversation.append({"role": "user", "content": h["user"]})
-            conversation.append({"role": "assistant", "content": h["bot"]})
-
-        # Add latest user query
-        conversation.append({
-            "role": "user",
-            "content": f"""
-User asked: {user_query}
-
-<QarbaContext>
-{context}
-</QarbaContext>
-
-<Memory>
-{summary_context}
-</Memory>
-"""
-        })
-
-        payload = {
-            "model": "google/gemma-2-9b-it",
-            "messages": conversation
-        }
-
-        # 🧩 Send to API
-        response = requests.post(f"{OPENAI_BASE_URL}/chat/completions", headers=headers, json=payload)
-        result = response.json()
-
-        if "error" in result:
-            print("❌ API Error:", result["error"])
-            return jsonify({"response": "Error communicating with AI model. Please try again later."})
-
-        ai_message = result["choices"][0]["message"]["content"].strip()
-
-        # Save short-term memory
-        history.append({"user": user_query, "bot": ai_message})
-        session["chat_history"] = history[-6:]
-
-        return jsonify({"response": ai_message})
-
+    except RuntimeError as e:
+        print("❌ LLM error:", e)
+        return jsonify({"response": "I'm having trouble reaching the AI right now. Please try again shortly."})
     except Exception as e:
-        print("❌ Error in chat:", e)
-        return jsonify({"response": "An internal error occurred. Please try again later."})
+        print("❌ Unexpected /chat error:")
+        import traceback; traceback.print_exc()
+        return jsonify({"response": "An internal error occurred. Please try again."})
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# 15. ADMIN & UTILITY ROUTES
+# ═══════════════════════════════════════════════════════════════════════════════
+@app.route("/admin/cache/clear", methods=["POST"])
+def clear_cache():
+    """
+    Force-clears the data cache.
+    Use after a Qarba API update so Tinah picks up new data immediately
+    rather than waiting for the 60-minute TTL.
+
+    Usage:
+        curl -X POST https://your-server/admin/cache/clear \\
+             -H "X-Admin-Secret: your_admin_secret"
+    """
+    secret = request.headers.get("X-Admin-Secret", "")
+    if not secret or secret != os.getenv("ADMIN_SECRET", ""):
+        return jsonify({"error": "Unauthorised"}), 403
+    _cache.clear()
+    print("🗑️  Cache cleared by admin.")
+    return jsonify({"status": "Cache cleared. Next requests will fetch fresh data."})
 
 
+@app.route("/health")
+def health():
+    """
+    Live status check. Visit /health after deploying to verify everything works.
+    Shows record counts, cache state, active tools, and registered pages.
+    """
+    return jsonify({
+        "status":          "ok",
+        "model":           "openai/gpt-4o-mini",
+        "cache_ttl":       f"{TTLCache.TTL_SECONDS // 60} minutes",
+        "cache_state":     _cache.info(),
+        "data": {
+            "properties":  len(fetch_properties()),
+            "blogs":       len(fetch_blogs()),
+            "agents":      len(fetch_agents()),
+            "faqs":        len(faqs),
+        },
+        "tools_active":    [t["function"]["name"] for t in TOOLS],
+        "pages_available": sorted(set(QARBA_PAGES.values())),
+    })
 
-#User asked: {user_query}
-
-#<faq_context>
-#{best_match['answer'] if best_match else 'No FAQ match'}
-#</faq_context>
-
-#<qarba_data>
-#{context}
-#</qarba_data>
-
-#})
-
-
-        payload = {
-            "model": "google/gemma-2-9b-it",
-            "messages": conversation
-        }
-
-        response = requests.post(f"{OPENAI_BASE_URL}/chat/completions", headers=headers, json=payload)
-        result = response.json()
-
-        if "error" in result:
-            print("❌ API Error:", result["error"])
-            return jsonify({"response": "Error communicating with AI model. Please try again later."})
-
-        ai_message = result["choices"][0]["message"]["content"].strip()
-
-        # Save conversation context
-        history.append({"user": user_query, "bot": ai_message})
-        session["chat_history"] = history[-5:]  # keep last 5 messages
-
-        return jsonify({"response": ai_message})
-
-    except Exception as e:
-        print(" Error in /chat route:", str(e))
-        return jsonify({"response": "An internal error occurred. Please try again later."})
 
 @app.route("/")
 def home():
     return render_template("index.html")
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 16. ENTRY POINT
+# ═══════════════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
-    app.run(debug=True)
+    # IMPORTANT: debug=False for any deployment (staging or production).
+    # debug=True exposes an interactive debugger to anyone who triggers an error.
+    # Use the DEBUG env var to enable debug mode only in local development.
+    debug_mode = os.getenv("FLASK_DEBUG", "false").lower() == "true"
+    app.run(
+        debug=debug_mode,
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", 5000)),
+    )
