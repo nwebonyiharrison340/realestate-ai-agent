@@ -1666,8 +1666,15 @@ def tool_search_properties(query: str) -> str:
             f"You can browse all available listings directly at qarba.com."
         )
 
-    # Stage 4: Soft rank by relevance
-    ranked = _soft_rank(query, filtered)
+    # Stage 4: Rank results
+    # For price-fallback results, keep price-proximity order (closest budget first)
+    # For all other results, use semantic soft-rank
+    if not exact_match and (criteria.get("min_price") or criteria.get("max_price")):
+        ranked = _sort_by_price_proximity(
+            filtered, criteria.get("min_price"), criteria.get("max_price")
+        )
+    else:
+        ranked = _soft_rank(query, filtered)
     count  = len(ranked)
 
     if exact_match:
@@ -1980,12 +1987,12 @@ You have four active tools:
 You also have search_agents but it is currently unavailable. If a user asks about agents, direct them to qarba.com.
 
 Your rules:
-1. ALWAYS call the relevant tool before answering. Never answer property, blog, FAQ, or company questions from memory.
-2. For ANY question about how to use Qarba, listing a property, renting, buying, account management, payments, passwords, mobile app, agents, or platform features — call answer_faq FIRST. This includes questions like "how do I list a property", "how can I contact a landlord", "is listing free", "how do I reset my password", etc.
+1. ALWAYS call the relevant tool before answering. NEVER answer from memory or general knowledge.
+2. For ANY question about how to use Qarba, listing a property, renting, buying, account management, payments, passwords, mobile app, agents, or platform features — call answer_faq FIRST. If answer_faq returns an answer, deliver that answer to the user WORD FOR WORD. Do not paraphrase, shorten, or rewrite it.
 3. If a user asks about Qarba's story, team, contact info, phone number, email, legal policies, or careers — call browse_website with the relevant page name.
 4. Base your answers ONLY on data returned by your tools. If a tool returns no results, say so honestly and direct the user to qarba.com.
-5. Write in clear, professional English. No markdown symbols (*, _, ##). Use plain text only.
-6. For property results, always include the property name, location, price, and link.
+5. Write in clear, professional English. Absolutely no markdown — no **, no *, no ##, no numbered lists, no bullet points. Plain text only.
+6. When search_properties returns results, relay the EXACT text the tool returned to the user. Do not reformat, renumber, summarize, or rewrite property listings in any way.
 7. Images in tool results appear as [IMAGE]URL[/IMAGE] — pass them through unchanged. Never describe or modify image tags.
 8. Keep answers concise. For long property lists, show the top results and mention more are available at qarba.com.
 9. Never make up property details, prices, or contact information. Only use what your tools return.
