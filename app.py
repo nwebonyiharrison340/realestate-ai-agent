@@ -313,7 +313,17 @@ def find_best_faq(query: str):
     user_emb = embedding_model.encode(query)
     scores   = [cosine_similarity([user_emb], [f["embedding"]])[0][0] for f in faqs]
     best_idx = int(np.argmax(scores))
-    return faqs[best_idx] if scores[best_idx] > 0.65 else None
+    best_score = scores[best_idx]
+    # Primary: semantic similarity
+    if best_score > 0.50:
+        return faqs[best_idx]
+    # Fallback: fuzzy keyword match for short/simple queries
+    q_lower = query.lower()
+    fuzz_scores = [fuzz.partial_ratio(q_lower, f["question"].lower()) for f in faqs]
+    fuzz_best = int(np.argmax(fuzz_scores))
+    if fuzz_scores[fuzz_best] >= 70:
+        return faqs[fuzz_best]
+    return None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -421,27 +431,78 @@ _NIGERIAN_STATES = [
 
 # Nigerian cities / areas known to appear in Qarba listings
 _NIGERIAN_CITIES = [
-    "abakaliki", "ugwuachara", "port harcourt", "lagos island",
-    "lekki", "victoria island", "ikoyi", "yaba", "surulere", "ajah",
-    "ikeja", "festac", "gbagada", "magodo", "maryland", "ojodu",
+    # Ebonyi / Abakaliki and surroundings
+    "abakaliki", "ugwuachara", "nkaliki", "igweokpu", "waterworks",
+    "presco", "presco campus", "mile 50", "afikpo road", "ishieke",
+    "kpirikpiri", "achara layout", "achara", "azugwu", "onueke",
+    "isieke", "ogoja road", "waterworks road", "afikpo", "edda",
+    "ezza south", "ezza north", "ikwo", "ohaukwu",
+    # Port Harcourt
+    "port harcourt", "rumuola", "rumuokoro", "trans amadi",
+    "old gra", "new gra", "gra", "peter odili", "eliozu", "rumuigbo",
+    "elechi", "diobu", "mile 1", "mile 2", "mile 3", "mile 4",
+    "woji", "rukpokwu", "ozuoba", "eneka", "obia akpor", "obio",
+    # Lagos
+    "lagos island", "lekki", "victoria island", "ikoyi", "yaba",
+    "surulere", "ajah", "ikeja", "festac", "gbagada", "magodo",
+    "maryland", "ojodu", "berger", "ogba", "ifako", "agege",
+    "mushin", "oshodi", "isolo", "egbeda", "iyana ipaja", "ipaja",
+    "badagry", "epe", "ikorodu", "sangotedo", "chevron", "osapa",
+    "awoyaya", "ibeju lekki", "ojota",
+    # Abuja
     "wuse", "garki", "maitama", "asokoro", "gwarinpa", "kubwa",
     "lokogoma", "apo", "jabi", "utako", "gudu", "lugbe",
-    "rumuola", "rumuokoro", "trans amadi", "old gra", "new gra", "gra",
+    "kado", "dawaki", "gaduwa", "life camp", "lifecamp", "nbora",
+    "kaura", "katampe", "wuye", "mpape", "pyakasa", "bwari",
+    # Enugu
+    "enugu", "nsukka", "agbani", "emene", "independence layout",
+    "gra enugu", "new haven", "achara layout enugu",
+    # Other cities
     "aba", "umuahia", "owerri", "onitsha", "awka", "nnewi",
     "benin city", "warri", "asaba", "sapele", "calabar", "uyo",
     "akure", "ado ekiti", "ibadan", "abeokuta", "ilorin",
     "minna", "lokoja", "jos", "kaduna city", "kano city",
+    "zaria", "sokoto", "maiduguri", "yola", "makurdi",
 ]
 
-# Property type synonyms → canonical display value substrings
+# Property type synonyms → canonical display value substrings.
+# Sorted longest-first at match time so more specific terms win
+# (e.g. "single room" wins over "room", "room and parlour" wins over "room").
 _PROPERTY_TYPE_MAP = {
-    "apartment": "apartment", "flat": "flat", "bungalow": "bungalow",
-    "duplex": "duplex", "self contain": "self", "selfcon": "self",
-    "self-con": "self", "studio": "studio", "penthouse": "penthouse",
-    "land": "land", "shop": "shop", "office": "office",
-    "commercial": "commercial", "warehouse": "warehouse",
-    "terrace": "terrace", "mansion": "mansion", "villa": "villa",
-    "townhouse": "townhouse", "house": "house",
+    # Specific room types (check before generic "room" or "flat")
+    "room and parlour":   "parlour",
+    "room and parlor":    "parlour",
+    "room & parlour":     "parlour",
+    "room & parlor":      "parlour",
+    "room self contain":  "single",
+    "single room":        "single",
+    "mini flat":          "mini",
+    "miniflat":           "mini",
+    "boys quarters":      "boys quarter",
+    "boys quarter":       "boys quarter",
+    "bedsitter":          "bedsit",
+    "bed sitter":         "bedsit",
+    "self contain":       "self",
+    "selfcon":            "self",
+    "self-con":           "self",
+    # Standard types
+    "penthouse":          "penthouse",
+    "apartment":          "apartment",
+    "bungalow":           "bungalow",
+    "townhouse":          "townhouse",
+    "terrace":            "terrace",
+    "mansion":            "mansion",
+    "duplex":             "duplex",
+    "studio":             "studio",
+    "villa":              "villa",
+    "flat":               "flat",
+    "house":              "house",
+    # Commercial
+    "warehouse":          "warehouse",
+    "commercial":         "commercial",
+    "office":             "office",
+    "shop":               "shop",
+    "land":               "land",
 }
 
 # Listing type synonyms
@@ -462,7 +523,62 @@ _PRICE_RE = _re.compile(
 )
 
 # Bedroom extraction
-_BED_RE = _re.compile(r"(\d+)\s*(?:bed(?:room)?s?|br)", _re.IGNORECASE)
+_BED_RE = _re.compile(
+    r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten)"
+    r"\s*(?:bed(?:room)?s?|br\b)",
+    _re.IGNORECASE
+)
+
+# Price range: between 500k and 1m
+_PRICE_RANGE_RE = _re.compile(
+    r"(?:between|from)\s*[₦#]?\s*(\d[\d,]*)\s*(k|thousand|m|million)?\s*"
+    r"(?:to|and)\s*[₦#]?\s*(\d[\d,]*)\s*(k|thousand|m|million)?",
+    _re.IGNORECASE
+)
+
+_NON_LOCATION_WORDS = {
+    "the", "a", "an", "this", "that", "these", "those", "some", "any",
+    "my", "your", "our", "their", "its", "me", "you", "us",
+    "bedroom", "bedrooms", "bed", "beds", "bathroom", "bathrooms",
+    "flat", "apartment", "house", "property", "properties",
+    "room", "rooms", "studio", "duplex", "bungalow",
+    "rent", "rental", "sale", "shortlet", "lease", "buy", "purchase",
+    "for", "with", "and", "or", "but", "of", "to", "from",
+    "affordable", "cheap", "nice", "good", "modern", "new", "old",
+    "available", "furnished", "unfurnished", "serviced",
+    "nigeria", "nigerian", "one", "two", "three", "four", "five",
+}
+
+_FREE_LOC_RE = _re.compile(
+    r"(?<![a-z0-9])(?:at|on|along|around|near|off|beside|opposite|in)\s+"
+    r"([a-z][a-z0-9\s]{1,45}?)(?=\s+(?:in|for|with|and|,|\.)| *$)",
+    _re.IGNORECASE
+)
+
+
+def _extract_free_location(q: str, known_locs: list, known_states: list) -> list:
+    """
+    Extract street/road/landmark names from the query not already captured
+    in the hardcoded city or state lists.
+    """
+    cleaned = q
+    for loc in sorted(known_locs + known_states, key=len, reverse=True):
+        cleaned = cleaned.replace(loc, " ")
+    cleaned = _re.sub(r"\s+", " ", cleaned).strip()
+    result = []
+    for m in _FREE_LOC_RE.finditer(cleaned):
+        phrase = m.group(1).strip()
+        phrase = _re.sub(r"\s+(?:in|for|with|that|which|and|or)$", "", phrase).strip()
+        words = phrase.split()
+        if not phrase or len(phrase) < 3:
+            continue
+        if len(words) == 1 and words[0] in _NON_LOCATION_WORDS:
+            continue
+        if phrase in _PROPERTY_TYPE_MAP or phrase in _LISTING_TYPE_MAP:
+            continue
+        if phrase not in result:
+            result.append(phrase)
+    return result
 
 # Amenity synonym map → exact Qarba amenity name (from API inspection)
 # Keys are user query terms; values are the exact name stored in the API.
@@ -541,69 +657,77 @@ _AMENITY_MAP = {
 
 def _parse_query(query: str) -> dict:
     """
-    Extract structured search criteria from a natural language query.
-    Returns a dict with keys: locations, states, property_type, listing_type,
-    min_beds, max_beds, max_price.
-    All values are None/[] when not detected.
+    Extract all structured criteria from a natural language query.
+    Returns: locations, states, free_location, property_type, listing_type,
+             min_beds, max_beds, min_price, max_price, amenities.
     """
     q = query.lower()
     criteria = {
-        "locations":     [],   # city/area names found
-        "states":        [],   # state names found
-        "property_type": None, # substring to match against property_type_display
-        "listing_type":  None, # substring to match against listing_type_display
+        "locations":     [],
+        "states":        [],
+        "free_location": [],
+        "property_type": None,
+        "listing_type":  None,
         "min_beds":      None,
         "max_beds":      None,
+        "min_price":     None,
         "max_price":     None,
-        "amenities":     [],   # exact Qarba amenity names required
+        "amenities":     [],
     }
 
-    # States (check longer names first to avoid "rivers" matching in "delivers")
     for state in sorted(_NIGERIAN_STATES, key=len, reverse=True):
-        # Match whole word only
         if _re.search(r"\b" + _re.escape(state) + r"\b", q):
             criteria["states"].append(state)
 
-    # Cities / areas
     for city in sorted(_NIGERIAN_CITIES, key=len, reverse=True):
-        if city in q:
+        if _re.search(r"(?<![a-z0-9])" + _re.escape(city) + r"(?![a-z0-9])", q):
             criteria["locations"].append(city)
 
-    # Property type
+    criteria["free_location"] = _extract_free_location(
+        q, criteria["locations"], criteria["states"]
+    )
+
     for keyword, canonical in sorted(_PROPERTY_TYPE_MAP.items(), key=lambda x: len(x[0]), reverse=True):
         if keyword in q:
             criteria["property_type"] = canonical
             break
 
-    # Listing type
     for keyword, canonical in sorted(_LISTING_TYPE_MAP.items(), key=lambda x: len(x[0]), reverse=True):
         if keyword in q:
             criteria["listing_type"] = canonical
             break
 
-    # Bedrooms — "3 bedroom", "2 bed", "4br"
+    _WORD_NUMS = {"one":1,"two":2,"three":3,"four":4,"five":5,
+                  "six":6,"seven":7,"eight":8,"nine":9,"ten":10}
     bed_matches = _BED_RE.findall(q)
     if bed_matches:
-        counts = [int(m) for m in bed_matches]
+        counts = [_WORD_NUMS[m.lower()] if m.lower() in _WORD_NUMS else int(m)
+                  for m in bed_matches]
         criteria["min_beds"] = min(counts)
         criteria["max_beds"] = max(counts)
 
-    # Price ceiling
-    price_matches = _PRICE_RE.findall(q)
-    for amount_str, suffix in price_matches:
-        amount = float(amount_str.replace(",", ""))
-        suffix = suffix.lower() if suffix else ""
-        if suffix in ("k", "thousand"):
-            amount *= 1_000
-        elif suffix in ("m", "million"):
-            amount *= 1_000_000
-        if amount > 1000:  # ignore tiny numbers like "3 bedroom"
-            criteria["max_price"] = amount
-            break
+    range_m = _PRICE_RANGE_RE.search(q)
+    if range_m:
+        def _to_naira(s, suf):
+            a = float(s.replace(",", ""))
+            s2 = (suf or "").lower()
+            if s2 in ("k", "thousand"): a *= 1_000
+            elif s2 in ("m", "million"): a *= 1_000_000
+            return a
+        criteria["min_price"] = _to_naira(range_m.group(1), range_m.group(2))
+        criteria["max_price"] = _to_naira(range_m.group(3), range_m.group(4))
+    else:
+        for amount_str, suffix in _PRICE_RE.findall(q):
+            amount = float(amount_str.replace(",", ""))
+            suffix = suffix.lower() if suffix else ""
+            if suffix in ("k", "thousand"): amount *= 1_000
+            elif suffix in ("m", "million"): amount *= 1_000_000
+            if amount > 1000:
+                criteria["max_price"] = amount
+                break
 
-    # Amenities — check longer phrases first to avoid "pool" matching "pool table"
     for keyword, canonical in sorted(_AMENITY_MAP.items(), key=lambda x: len(x[0]), reverse=True):
-        if keyword in q:
+        if _re.search(r"\b" + _re.escape(keyword) + r"\b", q):
             if canonical not in criteria["amenities"]:
                 criteria["amenities"].append(canonical)
 
@@ -617,9 +741,8 @@ def _normalise(s) -> str:
 
 def _hard_filter(properties: list, criteria: dict) -> list:
     """
-    Apply hard yes/no filters based on extracted criteria.
-    Returns only properties that match ALL stated constraints.
-    A constraint that was NOT stated (None/[]) is skipped — does not filter.
+    Apply hard yes/no filters. Returns properties passing ALL stated
+    constraints. Unstated constraints (None/[]) are skipped entirely.
     """
     result = []
     for p in properties:
@@ -628,26 +751,24 @@ def _hard_filter(properties: list, criteria: dict) -> list:
         prop_location = _normalise(p.get("location", ""))
         prop_type     = _normalise(p.get("property_type_display", ""))
         prop_listing  = _normalise(p.get("listing_type_display",  ""))
+        prop_name     = _normalise(p.get("property_name", ""))
         prop_beds     = p.get("bedrooms") or 0
         prop_rent     = p.get("rent_price")  or 0
         prop_sale     = p.get("sale_price")  or 0
         prop_price    = prop_rent or prop_sale
 
-        # ── Location filter ───────────────────────────────────────────────────
-        # If states were specified, property state must match one of them.
-        # State field can be "Ebonyi" or "Ebonyi State" — normalise both.
+        # State
         if criteria["states"]:
             state_match = False
             for s in criteria["states"]:
-                # Strip " state" suffix for comparison
                 clean_prop_state = prop_state.replace(" state", "").strip()
                 if s == clean_prop_state or s in prop_state:
                     state_match = True
                     break
             if not state_match:
-                continue  # skip — property is in a different state
+                continue
 
-        # If city/area was specified, it must appear in city OR location field.
+        # Known city
         if criteria["locations"]:
             loc_match = False
             for loc in criteria["locations"]:
@@ -655,19 +776,33 @@ def _hard_filter(properties: list, criteria: dict) -> list:
                     loc_match = True
                     break
             if not loc_match:
-                continue  # skip
-
-        # ── Property type filter ──────────────────────────────────────────────
-        if criteria["property_type"]:
-            if criteria["property_type"] not in prop_type:
                 continue
 
-        # ── Listing type filter ───────────────────────────────────────────────
+        # Free-text location (street / road / landmark)
+        if criteria.get("free_location"):
+            floc_match = False
+            for floc in criteria["free_location"]:
+                if (floc in prop_location or
+                        floc in prop_city or
+                        floc in prop_name or
+                        fuzz.partial_ratio(floc, prop_location) >= 80):
+                    floc_match = True
+                    break
+            if not floc_match:
+                continue
+
+        # Property type (also check property name for non-standard labels)
+        if criteria["property_type"]:
+            if (criteria["property_type"] not in prop_type and
+                    criteria["property_type"] not in prop_name):
+                continue
+
+        # Listing type
         if criteria["listing_type"]:
             if criteria["listing_type"] not in prop_listing:
                 continue
 
-        # ── Bedroom filter ────────────────────────────────────────────────────
+        # Bedrooms
         if criteria["min_beds"] is not None:
             if prop_beds < criteria["min_beds"]:
                 continue
@@ -675,29 +810,217 @@ def _hard_filter(properties: list, criteria: dict) -> list:
             if prop_beds > criteria["max_beds"]:
                 continue
 
-        # ── Price ceiling filter ──────────────────────────────────────────────
+        # Price ceiling
         if criteria["max_price"] is not None and prop_price > 0:
             if prop_price > criteria["max_price"]:
                 continue
 
-        # ── Amenity filter ────────────────────────────────────────────────────
-        # Property must have ALL requested amenities.
-        # Comparison is case-insensitive against exact Qarba amenity names.
+        # Price floor
+        if criteria.get("min_price") is not None and prop_price > 0:
+            if prop_price < criteria["min_price"]:
+                continue
+
+        # Amenities: ALL requested must be present
         if criteria.get("amenities"):
             prop_amenity_names = [
                 _normalise(a.get("name", ""))
                 for a in (p.get("amenities") or [])
             ]
-            amenity_match = all(
+            if not all(
                 _normalise(req) in prop_amenity_names
                 for req in criteria["amenities"]
-            )
-            if not amenity_match:
+            ):
                 continue
 
         result.append(p)
-
     return result
+
+
+def _describe_search(criteria: dict) -> str:
+    """Build a human-readable description of search criteria."""
+    naira = "₦"
+    parts = []
+    if criteria.get("free_location"):
+        parts.append(", ".join(l.title() for l in criteria["free_location"]))
+    if criteria["locations"]:
+        parts.append(", ".join(l.title() for l in criteria["locations"]))
+    if criteria["states"]:
+        parts.append(", ".join(s.title() + " State" for s in criteria["states"]))
+    if criteria["property_type"]:
+        parts.append(criteria["property_type"])
+    if criteria["listing_type"]:
+        parts.append(f"for {criteria['listing_type']}")
+    if criteria.get("min_beds"):
+        parts.append(f"{criteria['min_beds']} bedroom(s)")
+    if criteria.get("max_price"):
+        parts.append(f"under {naira}{int(criteria['max_price']):,}")
+    if criteria.get("min_price"):
+        parts.append(f"above {naira}{int(criteria['min_price']):,}")
+    if criteria.get("amenities"):
+        parts.append("with " + ", ".join(criteria["amenities"]))
+    return " | ".join(parts) if parts else "your criteria"
+
+
+def _sort_by_price_proximity(properties: list, min_price, max_price) -> list:
+    """Sort properties by closeness to the requested price (ascending distance)."""
+    def dist(p):
+        price = p.get("rent_price") or p.get("sale_price") or 0
+        if not price:
+            return float("inf")
+        if min_price and max_price:
+            mid = (min_price + max_price) / 2
+            return abs(price - mid)
+        elif max_price:
+            return abs(price - max_price)
+        elif min_price:
+            return abs(price - min_price)
+        return 0
+    return sorted(properties, key=dist)
+
+
+# Property types that are close enough to suggest as alternatives
+_TYPE_GROUPS = {
+    "flat":      {"apartment", "mini", "studio"},
+    "apartment": {"flat", "mini", "studio"},
+    "mini":      {"flat", "apartment", "studio"},
+    "studio":    {"flat", "apartment", "mini"},
+    "duplex":    {"bungalow", "terrace", "detached"},
+    "bungalow":  {"duplex", "terrace", "semi"},
+    "terrace":   {"bungalow", "semi", "duplex"},
+    "semi":      {"terrace", "bungalow", "detached"},
+    "detached":  {"duplex", "semi", "bungalow"},
+    "self":      {"single", "bedsit", "mini"},
+    "single":    {"self", "bedsit"},
+    "bedsit":    {"single", "self"},
+    "parlour":   {"single", "self", "bedsit"},
+}
+
+
+def _search_with_fallback(properties: list, criteria: dict):
+    """
+    Try exact search first, then progressively relax constraints until results
+    are found. Returns (results, exact_match: bool, notice: str or None).
+    The notice is an honest message explaining what was not found and why.
+    """
+    naira = "₦"
+
+    exact = _hard_filter(properties, criteria)
+    if exact:
+        return exact, True, None
+
+    # Step 1: relax street/road/landmark, keep known city + state
+    if criteria.get("free_location"):
+        r = {**criteria, "free_location": []}
+        res = _hard_filter(properties, r)
+        if res:
+            locs = ", ".join(l.title() for l in criteria["free_location"])
+            nearby = (
+                ", ".join(l.title() for l in criteria["locations"]) or
+                ", ".join(s.title() + " State" for s in criteria["states"]) or
+                "the area"
+            )
+            notice = (
+                f"I currently don't have any properties listed on/near {locs}. "
+                f"Here are the closest available options in {nearby}:"
+            )
+            return res, False, notice
+
+    # Step 2: relax specific city, keep state + type + beds + price
+    if criteria["locations"]:
+        r = {**criteria, "locations": [], "free_location": []}
+        res = _hard_filter(properties, r)
+        if res:
+            locs = ", ".join(l.title() for l in criteria["locations"])
+            state_ctx = (
+                ", ".join(s.title() + " State" for s in criteria["states"])
+                if criteria["states"] else "the surrounding area"
+            )
+            notice = (
+                f"I don't have any properties listed in {locs} at the moment. "
+                f"Here are similar options available in {state_ctx}:"
+            )
+            return res, False, notice
+
+    # Step 3: relax price, keep location + type + beds
+    if criteria.get("max_price") or criteria.get("min_price"):
+        r = {**criteria, "min_price": None, "max_price": None}
+        res = _hard_filter(properties, r)
+        if res:
+            # Sort by closeness to the requested price so nearest options show first
+            res = _sort_by_price_proximity(
+                res, criteria.get("min_price"), criteria.get("max_price")
+            )
+            if criteria.get("min_price") and criteria.get("max_price"):
+                p_desc = f"between {naira}{int(criteria['min_price']):,} and {naira}{int(criteria['max_price']):,}"
+            elif criteria.get("max_price"):
+                p_desc = f"under {naira}{int(criteria['max_price']):,}"
+            else:
+                p_desc = f"above {naira}{int(criteria['min_price']):,}"
+            notice = (
+                f"I don't currently have any properties under {naira}{int(criteria.get('max_price') or criteria.get('min_price')):,}. "
+                f"Here are the closest options to your budget:"
+            ) if criteria.get("max_price") and not criteria.get("min_price") else (
+                f"No properties found {p_desc}. "
+                f"Here are the closest options to your budget:"
+            )
+            return res, False, notice
+
+    # Step 3b: relax type to sibling types, keep location + price
+    if criteria.get("property_type") and criteria["property_type"] in _TYPE_GROUPS:
+        siblings = _TYPE_GROUPS[criteria["property_type"]]
+        for sib_type in siblings:
+            r = {**criteria, "property_type": sib_type, "free_location": []}
+            res = _hard_filter(properties, r)
+            if res:
+                notice = (
+                    f"I don't have exact {criteria['property_type']} listings matching your criteria. "
+                    f"Here are similar properties you might like:"
+                )
+                return res, False, notice
+
+    # Step 4: relax amenities, keep location + type + beds
+    if criteria.get("amenities"):
+        r = {**criteria, "amenities": [], "free_location": []}
+        res = _hard_filter(properties, r)
+        if res:
+            amen = ", ".join(criteria["amenities"])
+            notice = (
+                f"No properties found with all requested amenities ({amen}). "
+                f"Here are similar options:"
+            )
+            return res, False, notice
+
+    # Step 5: relax bedrooms, keep location + type
+    if criteria.get("min_beds") or criteria.get("max_beds"):
+        r = {**criteria, "min_beds": None, "max_beds": None, "free_location": []}
+        res = _hard_filter(properties, r)
+        if res:
+            bed_n = criteria.get("min_beds", "?")
+            notice = (
+                f"No {bed_n}-bedroom properties found matching your criteria. "
+                f"Here are similar options with different bedroom counts:"
+            )
+            return res, False, notice
+
+    # Step 6: type + listing type only (all of Nigeria)
+    if criteria["property_type"] or criteria["listing_type"]:
+        r = {
+            "locations": [], "states": [], "free_location": [],
+            "property_type": criteria["property_type"],
+            "listing_type":  criteria["listing_type"],
+            "min_beds": None, "max_beds": None,
+            "min_price": None, "max_price": None,
+            "amenities": [],
+        }
+        res = _hard_filter(properties, r)
+        if res:
+            notice = (
+                "I couldn't find properties matching all your criteria. "
+                "Here are some similar options currently available on Qarba:"
+            )
+            return res, False, notice
+
+    return [], False, None
 
 
 def _soft_rank(query: str, properties: list) -> list:
@@ -1307,13 +1630,11 @@ def scrape_qarba_page(page_hint: str) -> str:
 
 def tool_search_properties(query: str) -> str:
     """
-    Search Qarba property listings using a three-stage pipeline:
-      1. International guard  — reject out-of-scope queries immediately
-      2. Hard filter          — apply location, type, bedroom, price constraints
-      3. Soft rank            — order survivors by semantic + fuzzy relevance
+    Search Qarba property listings.
+    Pipeline: international guard -> parse criteria ->
+    progressive fallback search -> soft rank results.
     """
-
-    # Stage 1 — International guard
+    # Stage 1: International guard
     intl = _check_international(query)
     if intl:
         return (
@@ -1323,7 +1644,6 @@ def tool_search_properties(query: str) -> str:
             f"just let me know your preferred location within Nigeria."
         )
 
-    # Fetch all properties (served from cache after first load)
     properties = fetch_properties()
     if not properties:
         return (
@@ -1331,45 +1651,32 @@ def tool_search_properties(query: str) -> str:
             "Please visit qarba.com to browse directly."
         )
 
-    # Stage 2 — Parse query and apply hard filters
+    # Stage 2: Parse all criteria from the query
     criteria = _parse_query(query)
-    print(f"🔍 Search criteria: {criteria}")
+    print(f"🔍 Criteria: {criteria}")
 
-    filtered = _hard_filter(properties, criteria)
-    print(f"📊 Hard filter: {len(properties)} → {len(filtered)} properties")
+    # Stage 3: Search with progressive fallback
+    filtered, exact_match, notice = _search_with_fallback(properties, criteria)
 
-    # If hard filters eliminated everything, report clearly
     if not filtered:
-        parts = []
-        if criteria["states"]:
-            parts.append(f"in {', '.join(s.title() for s in criteria['states'])}")
-        if criteria["locations"]:
-            parts.append(f"in {', '.join(l.title() for l in criteria['locations'])}")
-        if criteria["property_type"]:
-            parts.append(criteria["property_type"])
-        if criteria["listing_type"]:
-            parts.append(f"for {criteria['listing_type']}")
-        if criteria["min_beds"]:
-            parts.append(f"with {criteria['min_beds']} bedroom(s)")
-        if criteria["max_price"]:
-            parts.append(f"under ₦{int(criteria['max_price']):,}")
-        if criteria.get("amenities"):
-            parts.append(f"with {', '.join(criteria['amenities'])}")
-
-        desc = " ".join(parts) if parts else "matching that description"
+        desc = _describe_search(criteria)
         return (
-            f"I couldn't find any properties {desc} on Qarba right now. "
-            f"Qarba may not have listings matching all those criteria yet. "
-            f"Try relaxing one constraint — for example, remove the price limit "
-            f"or try a nearby area. You can also browse all listings at qarba.com."
+            f"I wasn't able to find any properties matching {desc} on Qarba right now. "
+            f"Qarba may not have listings in that area or matching those specifications yet. "
+            f"You can browse all available listings directly at qarba.com."
         )
 
-    # Stage 3 — Soft rank the filtered set
+    # Stage 4: Soft rank by relevance
     ranked = _soft_rank(query, filtered)
+    count  = len(ranked)
 
-    # Build response
-    count = len(ranked)
-    lines = [f"Found {count} matching propert{'y' if count == 1 else 'ies'} on Qarba.com:\n"]
+    if exact_match:
+        header = f"Found {count} matching propert{'y' if count == 1 else 'ies'} on Qarba:\n"
+    else:
+        header = (notice + "\n") if notice else \
+                 f"Here are {count} available propert{'y' if count == 1 else 'ies'} on Qarba:\n"
+
+    lines = [header]
 
     for p in ranked[:10]:
         name       = p.get("property_name", "Unnamed Property")
@@ -1622,6 +1929,7 @@ TOOL_MAP = {
 # 12. LLM CALL HELPER
 # ═══════════════════════════════════════════════════════════════════════════════
 def call_llm(messages: list, tools: list = None) -> dict:
+    import time
     payload = {
         "model":       "openai/gpt-4o-mini",
         "messages":    messages,
@@ -1637,16 +1945,25 @@ def call_llm(messages: list, tools: list = None) -> dict:
         "Content-Type":  "application/json",
     }
 
-    resp   = requests.post(
-        f"{OPENAI_BASE_URL}/chat/completions",
-        headers=headers,
-        json=payload,
-        timeout=60,
-    )
-    result = resp.json()
-    if "error" in result:
-        raise RuntimeError(f"LLM API error: {result['error']}")
-    return result
+    last_err = None
+    for attempt in range(3):
+        try:
+            resp = requests.post(
+                f"{OPENAI_BASE_URL}/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=60,
+            )
+            result = resp.json()
+            if "error" in result:
+                raise RuntimeError(f"LLM API error: {result['error']}")
+            return result
+        except (requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout) as e:
+            last_err = e
+            if attempt < 2:
+                time.sleep(1.5 * (attempt + 1))
+    raise last_err
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1664,14 +1981,15 @@ You also have search_agents but it is currently unavailable. If a user asks abou
 
 Your rules:
 1. ALWAYS call the relevant tool before answering. Never answer property, blog, FAQ, or company questions from memory.
-2. If a user asks about Qarba's story, team, contact info, phone number, email, legal policies, or careers — call browse_website with the relevant page name.
-3. Base your answers ONLY on data returned by your tools. If a tool returns no results, say so honestly and direct the user to qarba.com.
-4. Write in clear, professional English. No markdown symbols (*, _, ##). Use plain text only.
-5. For property results, always include the property name, location, price, and link.
-6. Images in tool results appear as [IMAGE]URL[/IMAGE] — pass them through unchanged. Never describe or modify image tags.
-7. Keep answers concise. For long property lists, show the top results and mention more are available at qarba.com.
-8. Never make up property details, prices, or contact information. Only use what your tools return.
-9. You represent Qarba professionally. Be helpful, warm, and accurate at all times.
+2. For ANY question about how to use Qarba, listing a property, renting, buying, account management, payments, passwords, mobile app, agents, or platform features — call answer_faq FIRST. This includes questions like "how do I list a property", "how can I contact a landlord", "is listing free", "how do I reset my password", etc.
+3. If a user asks about Qarba's story, team, contact info, phone number, email, legal policies, or careers — call browse_website with the relevant page name.
+4. Base your answers ONLY on data returned by your tools. If a tool returns no results, say so honestly and direct the user to qarba.com.
+5. Write in clear, professional English. No markdown symbols (*, _, ##). Use plain text only.
+6. For property results, always include the property name, location, price, and link.
+7. Images in tool results appear as [IMAGE]URL[/IMAGE] — pass them through unchanged. Never describe or modify image tags.
+8. Keep answers concise. For long property lists, show the top results and mention more are available at qarba.com.
+9. Never make up property details, prices, or contact information. Only use what your tools return.
+10. You represent Qarba professionally. Be helpful, warm, and accurate at all times.
 """
 
 

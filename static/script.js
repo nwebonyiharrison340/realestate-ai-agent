@@ -62,6 +62,8 @@ document.addEventListener("DOMContentLoaded", () => {
     sendBtn.disabled = true;
     appendMessage(message, "user-message");
     userInput.value  = "";
+    userInput.style.height = "";
+    userInput.style.overflowY = "hidden";
 
     // Create typing indicator fresh every time
     const typingEl = createTypingIndicator();
@@ -94,9 +96,16 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // Auto-resize textarea as user types
+  userInput.addEventListener("input", function () {
+    this.style.height = "auto";
+    this.style.height = this.scrollHeight + "px";
+    this.style.overflowY = this.scrollHeight > 120 ? "auto" : "hidden";
+  });
+
   // Event listeners — JS only, no duplicate inline HTML handlers
   sendBtn.addEventListener("click", sendMessage);
-  userInput.addEventListener("keypress", (e) => {
+  userInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
