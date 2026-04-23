@@ -9,6 +9,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const chatToggleBtn = document.getElementById("chat-toggle-btn");
   const chatCloseBtn  = document.getElementById("chat-close-btn");
   const sendBtn       = document.getElementById("send-btn");
+  const micBtn        = document.getElementById("mic-btn");
   const userInput     = document.getElementById("user-input");
   const chatBody      = document.getElementById("chat-body");
 
@@ -56,6 +57,11 @@ document.addEventListener("DOMContentLoaded", () => {
     if (message.length > 500) {
       appendMessage("Please keep your message under 500 characters.", "bot-message");
       return;
+    }
+
+    // Stop any active recording before sending
+    if (micBtn.classList.contains("recording")) {
+      micBtn.click();
     }
 
     isWaiting        = true;
@@ -111,6 +117,100 @@ document.addEventListener("DOMContentLoaded", () => {
       sendMessage();
     }
   });
+
+  // ── Voice input (Web Speech API) ────────────────────────────────────────
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  if (!SpeechRecognition) {
+    // Browser doesn't support it — hide the button silently
+    micBtn.classList.add("unsupported");
+  } else {
+    const recognition      = new SpeechRecognition();
+    recognition.lang       = "en-US";   // handles Nigerian English well
+    recognition.continuous = false;     // auto-stops after a pause
+    recognition.interimResults = true;  // show live transcription as user speaks
+
+    let isRecording    = false;
+    let textBeforeMic  = "";  // text already in box before recording started
+    let finalText      = "";  // accumulated confirmed transcript
+
+    function resizeAfterVoice() {
+      userInput.style.height = "auto";
+      userInput.style.height = userInput.scrollHeight + "px";
+      userInput.style.overflowY = userInput.scrollHeight > 120 ? "auto" : "hidden";
+    }
+
+    recognition.onstart = () => {
+      isRecording   = true;
+      textBeforeMic = userInput.value;
+      finalText     = "";
+      micBtn.classList.add("recording");
+      micBtn.title  = "Stop recording";
+    };
+
+    recognition.onresult = (e) => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const chunk = e.results[i][0].transcript;
+        if (e.results[i].isFinal) {
+          finalText += chunk;
+        } else {
+          interim = chunk;
+        }
+      }
+      // Build prefix — add a space if there was existing text
+      const prefix = textBeforeMic
+        ? textBeforeMic.trimEnd() + " "
+        : "";
+      // Show interim live; final text replaces it when confirmed
+      userInput.value = prefix + finalText + interim;
+      resizeAfterVoice();
+    };
+
+    recognition.onend = () => {
+      isRecording = false;
+      micBtn.classList.remove("recording");
+      micBtn.title = "Voice input";
+
+      // Leave only the confirmed final text (strip any dangling interim)
+      const prefix = textBeforeMic
+        ? textBeforeMic.trimEnd() + " "
+        : "";
+      if (finalText) {
+        userInput.value = prefix + finalText.trim();
+      }
+      resizeAfterVoice();
+      userInput.focus();
+      // Place cursor at end
+      userInput.setSelectionRange(userInput.value.length, userInput.value.length);
+    };
+
+    recognition.onerror = (e) => {
+      isRecording = false;
+      micBtn.classList.remove("recording");
+      micBtn.title = "Voice input";
+      if (e.error === "not-allowed" || e.error === "permission-denied") {
+        appendMessage(
+          "Microphone access was denied. Please allow microphone permission in your browser settings and try again.",
+          "bot-message"
+        );
+      } else if (e.error !== "no-speech" && e.error !== "aborted") {
+        appendMessage(
+          "Voice input isn't available right now. Please type your message instead.",
+          "bot-message"
+        );
+      }
+    };
+
+    micBtn.addEventListener("click", () => {
+      if (isWaiting) return;
+      if (isRecording) {
+        recognition.stop();
+      } else {
+        recognition.start();
+      }
+    });
+  }
 
   // ── Append a message bubble ──────────────────────────────────────────────
   function appendMessage(content, className) {
